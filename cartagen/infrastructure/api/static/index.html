@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CartaGen — Dashboard Pluviométrique & Multi-Agents</title>
+    
+    <!-- Google Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Styling principal -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <div class="app-container">
+        
+        <!-- ========================================== -->
+        <!-- SIDEBAR DE CONTRÔLE (GAUCHE)               -->
+        <!-- ========================================== -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-area">
+                    <i class="fa-solid fa-map-location-dot logo-icon"></i>
+                    <h1>CartaGen</h1>
+                </div>
+                <span class="badge">DGRE Tunisia</span>
+            </div>
+
+            <!-- Module de Saisie -->
+            <div class="control-card">
+                <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Saisir votre Consigne</h3>
+                <p class="section-desc">Entrez une instruction en langage naturel pour générer la carte d'isohyètes.</p>
+                
+                <div class="prompt-wrapper">
+                    <textarea id="promptInput" placeholder="Ex: Affiche la carte de pluie pour la saison de l'hiver en Tunisie..."></textarea>
+                    <button id="generateBtn" class="primary-btn">
+                        <span class="btn-text">Générer la Carte</span>
+                        <i class="fa-solid fa-paper-plane btn-icon"></i>
+                        <div class="spinner hidden"></div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Raccourcis et Suggestions -->
+            <div class="suggestions-area">
+                <h4><i class="fa-solid fa-lightbulb"></i> Exemples de Consignes</h4>
+                <div class="suggestions-grid">
+                    <button class="suggest-chip">Carte de pluie pour le mois de sept</button>
+                    <button class="suggest-chip">Isohyètes d'hiver au gouvernorat de Béja</button>
+                    <button class="suggest-chip">Différence de pluie Hiver - Printemps</button>
+                    <button class="suggest-chip">Carte de densité des stations</button>
+                </div>
+            </div>
+
+            <!-- Console de logs des Agents -->
+            <div class="log-console-container">
+                <div class="console-header">
+                    <h4><i class="fa-solid fa-terminal"></i> Console des Agents</h4>
+                    <span id="statusIndicator" class="indicator idle">Prêt</span>
+                </div>
+                <div class="console-body" id="consoleLogs">
+                    <div class="log-line system">[System] Prêt à recevoir une consigne.</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ========================================== -->
+        <!-- ESPACE D'AFFICHAGE DU RÉSULTAT (DROIT)    -->
+        <!-- ========================================== -->
+        <main class="main-content">
+            
+            <!-- Barre de navigation d'onglets -->
+            <header class="tab-header">
+                <nav class="tabs">
+                    <button class="tab-btn active" data-tab="visualisation">
+                        <i class="fa-solid fa-image"></i> Rendu
+                    </button>
+                    <button class="tab-btn" data-tab="tableau-donnees">
+                        <i class="fa-solid fa-table"></i> Tableau
+                    </button>
+                    <button class="tab-btn" data-tab="code-python">
+                        <i class="fa-solid fa-code"></i> Code Python
+                    </button>
+                    <button class="tab-btn" data-tab="requete-sql">
+                        <i class="fa-solid fa-database"></i> Requête SQL
+                    </button>
+                    <button class="tab-btn" data-tab="historique">
+                        <i class="fa-solid fa-history"></i> Historique
+                    </button>
+                </nav>
+                
+                <div class="header-actions">
+                    <a id="downloadBtn" class="icon-btn hidden" title="Télécharger la carte" download="carte_isohyete.png">
+                        <i class="fa-solid fa-download"></i>
+                    </a>
+                </div>
+            </header>
+
+            <!-- Contenus des onglets -->
+            <section class="tab-viewport">
+                
+                <!-- Onglet 1 : Visualisation de l'image -->
+                <div class="tab-content active" id="visualisation">
+                    <div class="image-viewer">
+                        <!-- Image de départ par défaut ou de chargement -->
+                        <div class="placeholder-view" id="mapPlaceholder">
+                            <i class="fa-solid fa-earth-africa placeholder-icon"></i>
+                            <h2>Aucun rendu généré</h2>
+                            <p>Saisissez une consigne dans le volet de gauche et lancez le traitement.</p>
+                        </div>
+                        <img id="mapImage" class="map-result hidden" src="" alt="Carte ou Graphique de la Tunisie">
+                    </div>
+                </div>
+
+                <!-- Onglet 1.5 : Tableau de données -->
+                <div class="tab-content" id="tableau-donnees">
+                    <div class="table-viewer-container">
+                        <div class="viewer-actions">
+                            <span>Données Tabulaires d'Analyse</span>
+                            <button class="copy-btn" id="copyTableBtn">
+                                <i class="fa-regular fa-clipboard"></i> Copier
+                            </button>
+                        </div>
+                        <div class="table-responsive" id="tableDataDisplay">
+                            <div class="placeholder-view" id="tablePlaceholder">
+                                <i class="fa-solid fa-table placeholder-icon"></i>
+                                <h2>Aucune donnée disponible</h2>
+                                <p>Saisissez une consigne demandant un tableau ou une analyse statistique.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Onglet 2 : Visualisation Code Python -->
+                <div class="tab-content" id="code-python">
+                    <div class="code-viewer-container">
+                        <div class="viewer-actions">
+                            <span>Code Python Généré (VisCoder)</span>
+                            <button class="copy-btn" id="copyCodeBtn">
+                                <i class="fa-regular fa-clipboard"></i> Copier
+                            </button>
+                        </div>
+                        <pre><code id="pythonCodeDisplay"># En attente de génération...</code></pre>
+                    </div>
+                </div>
+
+                <!-- Onglet 3 : Visualisation Requête SQL -->
+                <div class="tab-content" id="requete-sql">
+                    <div class="code-viewer-container">
+                        <div class="viewer-actions">
+                            <span>Requête SQL d'Extraction (SQL Agent)</span>
+                            <button class="copy-btn" id="copySqlBtn">
+                                <i class="fa-regular fa-clipboard"></i> Copier
+                            </button>
+                        </div>
+                        <pre><code id="sqlQueryDisplay">-- En attente de génération...</code></pre>
+                    </div>
+                </div>
+
+                <!-- Onglet 4 : Historique des cartes -->
+                <div class="tab-content" id="historique">
+                    <div class="history-list-container">
+                        <h3>Historique des requêtes de cette session</h3>
+                        <p class="section-desc">Toutes les cartes générées restent accessibles ci-dessous.</p>
+                        <div class="history-grid" id="historyGrid">
+                            <div class="empty-history">
+                                <i class="fa-solid fa-folder-open"></i>
+                                <p>Aucun historique disponible pour le moment.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+        </main>
+
+    </div>
+
+    <!-- Script de logique -->
+    <script src="/static/app.js"></script>
+</body>
+</html>
