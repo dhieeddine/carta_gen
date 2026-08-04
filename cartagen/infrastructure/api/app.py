@@ -305,9 +305,10 @@ async def download_yearbook(filename: str):
 @app.post("/api/v1/data/ingest-mdb")
 async def ingest_mdb_file(
     file: UploadFile = File(...),
-    gouvernorat: Optional[str] = Form(None)
+    gouvernorat: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = None
 ):
-    """Reçoit un fichier MS Access (.mdb / .accdb) et l l'ingère dans PostgreSQL avec auto-détection du gouvernorat."""
+    """Reçoit un fichier MS Access (.mdb / .accdb) et l'ingère dans PostgreSQL avec auto-détection du gouvernorat."""
     if not (file.filename.endswith(".mdb") or file.filename.endswith(".accdb")):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .mdb ou .accdb sont acceptés.")
 
@@ -326,6 +327,11 @@ async def ingest_mdb_file(
             err_msg = result.get("error", "Échec de l'ingestion MDB.")
             print(f"[API Ingest MDB] Échec : {err_msg}\n{result.get('traceback', '')}")
             raise HTTPException(status_code=500, detail=err_msg)
+            
+        # Déclenchement automatique de l'indexation Zvec
+        if background_tasks:
+            background_tasks.add_task(annuaire_indexer.index)
+            print("[API Ingest MDB] Indexation Zvec lancée automatiquement en arrière-plan.")
             
         return result
     except HTTPException:

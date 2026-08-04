@@ -21,8 +21,13 @@ graph TD
     H -->|Erreur| F
 ```
 
-### Le Workflow détaillé :
-1. **Recherche Sémantique (RAG)** : Dès qu'une requête en langage naturel est reçue, l'index vectoriel local **Zvec** recherche les stations (parmi les stations retenues de `yasra_data`) et les schémas de table correspondants pour fournir un contexte précis au LLM.
+### Le Workflow RAG & Indexation (Nouveaux Principes) :
+1. **Recherche Sémantique Hybride & Filtrage par Métadonnées (RAG)** : 
+   * **Chunks Hybrides** : Chaque passage dans l'index **Zvec** est préfixé d'une entête structurée `[META: doc_name='...', page=...]` pour associer sémantiquement les concepts à leurs dimensions (année, gouvernorat).
+   * **Filtrage Temporel Strict** : Si une année est identifiée dans la question utilisateur, seuls les chunks correspondants à cette année (ou généraux `page=0`) sont retournés par Zvec.
+   * **Re-scoring / Boost Spatial** : Les passages associés au gouvernorat mentionné par l'utilisateur reçoivent un bonus de score de 30% pour être traités en priorité par le LLM.
+   * **Résumés Analytiques Macro** : Zvec contient également des synthèses de records absolus (min, max, moyennes nationales calculées) pour répondre directement aux questions globales.
+   * **Indexation Automatique** : Tout import de fichier MDB déclenche instantanément et de façon asynchrone la ré-indexation de l'index Zvec.
 2. **Text-to-SQL Agent** : Traduit la demande de l'utilisateur en requête SQL PostgreSQL/PostGIS optimale sur la table filtrée `pluies_148`.
 3. **SIG / Code Generator Agent** : Génère le script Python à exécuter (avec pandas, matplotlib, geopandas, scipy) pour traiter les données et produire les cartes d'isohyètes ou les graphes.
 4. **Sandbox Manager** : Exécute le script généré dans un sous-processus isolé.
