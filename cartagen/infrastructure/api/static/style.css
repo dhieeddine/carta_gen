@@ -45,16 +45,43 @@ body {
     font-family: var(--font-main);
     background-color: var(--bg-primary);
     color: var(--text-primary);
-    height: 100vh;
-    overflow: hidden;
+    min-height: 100vh;
+    overflow-x: hidden;
     line-height: 1.5;
 }
 
 /* App Container Layout */
 .app-container {
     display: flex;
-    height: 100vh;
+    min-height: 100vh;
     width: 100vw;
+}
+
+/* Full-width layout — no sidebar */
+.app-container.app-fullwidth {
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Topbar logo strip */
+.topbar-logo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 28px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+/* Full-width main panel */
+.main-content.main-fullwidth {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 /* ============================================================
@@ -132,6 +159,175 @@ body {
     color: var(--text-secondary);
 }
 
+.provider-selector-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.provider-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.provider-label-row label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.text-link-btn {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.text-link-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.styled-select {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.styled-select:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.styled-select option {
+    background: #1e293b;
+    color: #f8fafc;
+}
+
+/* Modal Overlay & Form styling */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(4px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.modal-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    width: 480px;
+    max-width: 90vw;
+    box-shadow: var(--shadow-xl);
+    overflow: hidden;
+    animation: fadeInModal 0.2s ease-out;
+}
+
+@keyframes fadeInModal {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.form-group input[type="text"],
+.form-group input[type="password"] {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+}
+
+.form-group input:focus {
+    border-color: var(--accent-color);
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+
 .prompt-wrapper {
     display: flex;
     flex-direction: column;
@@ -140,7 +336,7 @@ body {
 
 #promptInput {
     width: 100%;
-    height: 120px;
+    min-height: 180px;
     background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -148,7 +344,7 @@ body {
     color: var(--text-primary);
     font-family: var(--font-main);
     font-size: 14px;
-    resize: none;
+    resize: vertical;
     transition: var(--transition);
 }
 
@@ -700,3 +896,280 @@ body {
 .table-responsive::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
 }
+
+/* Yearbook Generator Container Styles */
+.yearbook-generator-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px;
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-md);
+    text-align: left;
+}
+
+.yearbook-generator-container h3 {
+    margin-top: 0;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-primary);
+}
+
+.yearbook-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 24px;
+    margin-bottom: 12px;
+}
+
+.yearbook-form .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.yearbook-form label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.yearbook-form input,
+.yearbook-form select {
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    color: var(--text-primary);
+    font-size: 15px;
+    outline: none;
+    transition: var(--transition);
+}
+
+.yearbook-form input:focus,
+.yearbook-form select:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+#generateYearbookBtn {
+    padding: 14px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.yearbook-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top: 2px solid white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
+
+.yearbook-result-box,
+.yearbook-error-box {
+    margin-top: 32px;
+    animation: fadeIn 0.3s ease;
+}
+
+.result-card {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background-color: rgba(16, 185, 129, 0.05);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: var(--radius-md);
+    padding: 24px;
+}
+
+.pdf-large-icon {
+    font-size: 48px;
+    color: #ef4444;
+}
+
+.result-details h4 {
+    margin: 0 0 4px 0;
+    font-size: 18px;
+    color: var(--text-primary);
+}
+
+.result-details p {
+    margin: 0 0 16px 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.download-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    padding: 12px 24px;
+    font-size: 14px;
+    background-color: #10b981;
+    color: white;
+    border: none;
+}
+
+.download-link:hover {
+    background-color: #059669;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+    color: white;
+}
+
+.error-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    background-color: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-md);
+    padding: 20px;
+}
+
+.error-icon {
+    font-size: 24px;
+    color: #ef4444;
+    margin-top: 2px;
+}
+
+.error-details h4 {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    color: var(--text-primary);
+}
+
+.error-details p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+/* Utility class for hiding elements */
+.hidden {
+    display: none !important;
+}
+
+/* ============================================================
+   TABLE DE DONNÉES — .data-table
+   ============================================================ */
+
+/* Wrapper scrollable */
+#tableDataDisplay {
+    overflow: auto;
+    max-height: calc(100vh - 220px);
+    border-radius: var(--radius-md);
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent-color) transparent;
+}
+
+#tableDataDisplay::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+#tableDataDisplay::-webkit-scrollbar-track {
+    background: transparent;
+}
+#tableDataDisplay::-webkit-scrollbar-thumb {
+    background: var(--accent-color);
+    border-radius: 3px;
+}
+
+/* Table principale */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: var(--font-main);
+    color: var(--text-primary);
+    min-width: 500px;
+}
+
+/* En-têtes */
+.data-table thead tr {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.data-table thead th {
+    padding: 11px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #e0eaff;
+    /* Séparateurs entre colonnes header */
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
+    border-bottom: 2px solid var(--accent-color);
+    white-space: nowrap;
+}
+
+.data-table thead th:last-child {
+    border-right: none;
+}
+
+/* Corps de la table */
+.data-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    transition: background 0.15s ease;
+}
+
+/* Alternance de couleur des lignes */
+.data-table tbody tr:nth-child(even) {
+    background: rgba(30, 41, 59, 0.5);
+}
+
+.data-table tbody tr:nth-child(odd) {
+    background: rgba(15, 23, 42, 0.4);
+}
+
+/* Survol */
+.data-table tbody tr:hover {
+    background: rgba(59, 130, 246, 0.12);
+    cursor: default;
+}
+
+/* Cellules */
+.data-table tbody td {
+    padding: 9px 16px;
+    /* Séparateurs verticaux entre colonnes */
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.data-table tbody td:last-child {
+    border-right: none;
+}
+
+/* Colonne numérique (Cumul, Année) — alignée à droite */
+.data-table tbody td:nth-child(3),
+.data-table tbody td:nth-child(4),
+.data-table thead th:nth-child(3),
+.data-table thead th:nth-child(4) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Courier New', monospace;
+}
+
+/* Première colonne (Gouvernorat) — légèrement accentuée */
+.data-table tbody td:first-child {
+    font-weight: 500;
+    color: #93c5fd;
+}
+

@@ -4,18 +4,29 @@ import os
 import time
 import json
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple, List
 from cartagen.infrastructure.database.postgres_connection import PostgresConnectionManager
+from cartagen.infrastructure.database.vector_manager import VectorManager
 
 class SIGGeneratorAgent:
-    """Agent chargé de générer le code Python géospatiale robuste en s'appuyant sur des APIs Cloud ou VisCoder2-7B local."""
+    """Agent chargé de générer et corriger du code Python géospatial robuste (Matplotlib/GeoPandas/PostGIS)."""
 
-    def __init__(self, hf_token: str, db_manager: PostgresConnectionManager):
+    def __init__(
+        self,
+        hf_token: str,
+        db_manager: PostgresConnectionManager,
+        vector_manager: Optional[VectorManager] = None,
+        score_cutoff: float = 0.70,
+        provider_manager: Optional[Any] = None
+    ):
         self.hf_token = hf_token
         self.db_manager = db_manager
+        self.vector_manager = vector_manager
+        self.score_cutoff = score_cutoff
+        self.provider_manager = provider_manager
         
         # Configuration des providers LLM
-        self.llm_provider = os.getenv("LLM_PROVIDER", "local").lower()
+        self.llm_provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -33,7 +44,77 @@ class SIGGeneratorAgent:
         self.gouv_col = "lib_fr"  # Colonne nom français dans la table gouvernorats
         self.reg_col  = "lib_fr"  # Colonne nom français dans la table rgion_hydrographique
 
-    def initialize_model(self):
+    def _retrieve_zvec_context(self, prompt: str) -> Dict[str, Any]:
+        """Effectue la recherche sémantique active dans Zvec avec filtrage par score (Score Cutoff).
+
+        Args:
+            prompt (str): Requête ou description en langage naturel.
+
+        Returns:
+            Dict[str, Any]: Contexte RAG contenant les clés 'stations' et 'schemas' filtrées.
+        """
+        if not self.vector_manager:
+            return {}
+        try:
+            raw_stations = self.vector_manager.query_stations_by_text(prompt, topk=5)
+            raw_schemas = self.vector_manager.query_schemas_by_text(prompt, topk=3)
+
+            # Filtrage dynamique par seuil (Score Cutoff / Distance Cosine)
+            filtered_stations = [
+                st for st in raw_stations
+                if st.get("score", 0.0) <= self.score_cutoff or st.get("score", 0.0) >= (1.0 - self.score_cutoff)
+            ]
+            filtered_schemas = [
+                sch for sch in raw_schemas
+                if sch.get("score", 0.0) <= self.score_cutoff or sch.get("score", 0.0) >= (1.0 - self.score_cutoff)
+            ]
+
+            return {
+                "stations": filtered_stations,
+                "schemas": filtered_schemas
+            }
+        except Exception as e:
+            print(f"[SIG Agent] Avertissement recherche sémantique Zvec : {e}")
+            return {}
+
+    def _format_rag_context(self, vector_context: Optional[Dict[str, Any]]) -> str:
+        """Formate de manière synthétique et compacte le contexte RAG Zvec (format DDL / Schéma concis).
+
+        Args:
+            vector_context (Optional[Dict[str, Any]]): Contexte RAG contenant les stations et schémas.
+
+        Returns:
+            str: Chaîne de caractères formatée pour le prompt.
+        """
+        if not vector_context:
+            return ""
+
+        stations = vector_context.get("stations", [])
+        schemas = vector_context.get("schemas", [])
+
+        if not stations and not schemas:
+            return ""
+
+        lines = ["\n### Schémas & Métadonnées Métier (Zvec RAG) :"]
+
+        if schemas:
+            for sch in schemas:
+                tname = sch.get("table_name", "")
+                desc = sch.get("description", "")
+                if tname:
+                    lines.append(f"- Tables : {tname} | {desc}")
+
+        if stations:
+            station_items = [
+                f"{st.get('nom', '')} (ID: {st.get('id_station', '')})"
+                for st in stations if st.get("nom")
+            ]
+            if station_items:
+                lines.append(f"- Stations pertinentes : [{', '.join(station_items)}]")
+
+        return "\n".join(lines)
+
+    def initialize_model(self) -> None:
         """Initialise le modèle LLM choisi (local ou cloud)."""
         if self.llm_provider not in ["local", "viscoder"]:
             print(f"[SIG Agent] Utilisation du provider externe : '{self.llm_provider}'. Aucun modele local ne sera charge.")
@@ -139,25 +220,33 @@ class SIGGeneratorAgent:
             return self._skeleton_stations_density()
         return self._skeleton_mono()
 
-    def generate_code(self, prompt: str, sql_query: str, vector_context: Dict[str, Any] = None) -> str:
-        """Génère le code Python complet en associant le prompt, la requête SQL et le squelette."""
+    def generate_code(
+        self, 
+        prompt: str, 
+        sql_query: str, 
+        vector_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Génère le code Python complet en associant le prompt, la requête SQL et le squelette.
+
+        Args:
+            prompt (str): Requête en langage naturel de l'utilisateur.
+            sql_query (str): Requête SQL d'extraction générée par l'Agent SQL.
+            vector_context (Optional[Dict[str, Any]]): Contexte RAG pré-calculé (ou None pour retrieval actif).
+
+        Returns:
+            str: Code Python complet et autonome généré.
+        """
         self.initialize_model()
 
         ptype = self.detect_prompt_type(prompt)
         skeleton = self._get_skeleton(ptype)
 
-        # RAG Vector Context Formatting
-        rag_context = ""
-        if vector_context:
-            rag_context += "\n### Contexte de recherche sémantique (Zvec Vector DB) :\n"
-            if "stations" in vector_context and vector_context["stations"]:
-                rag_context += "- Stations similaires trouvées dans la base de données :\n"
-                for station in vector_context["stations"]:
-                    rag_context += f"  * Nom: {station['nom']} (ID: {station['id_station']}) [Score de similarité: {station['score']:.4f}]\n"
-            if "schemas" in vector_context and vector_context["schemas"]:
-                rag_context += "- Tables de données et schémas pertinents :\n"
-                for schema in vector_context["schemas"]:
-                    rag_context += f"  * Table: {schema['table_name']} -> {schema['description']} [Score: {schema['score']:.4f}]\n"
+        # Retrieval dynamique Zvec si non fourni
+        if not vector_context:
+            vector_context = self._retrieve_zvec_context(prompt)
+
+        # Formatage synthétique et compact du contexte RAG
+        rag_context = self._format_rag_context(vector_context)
 
         if ptype == "analysis":
             context = f"""Tu disposes de la requête SQL d'extraction suivante pour charger les données pluviométriques depuis PostgreSQL :
@@ -191,21 +280,37 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
                 "### Contraintes de programmation (IMPÉRATIVES) :\n"
                 "- Écris UNIQUEMENT du code Python complet et exécutable, sans explications.\n"
                 "- Le code doit être autonome (tous les imports inclus).\n"
-                "- Charge TOUTES les couches géographiques depuis la base de données PostGIS avec gpd.read_postgis(). Ne lis pas de fichiers shapefiles sur le disque.\n"
+                "- Charge TOUTES les couches géographiques depuis la base de données PostGIS avec gpd.read_postgis().\n"
                 "- Utilise la fonction d'extraction SQL fournie pour remplir le DataFrame.\n"
+                "- OBLIGATOIRE ANTI-NaN : Immédiatement après pd.read_sql(), ajoute TOUJOURS cette ligne avant tout traitement spatial :\n"
+                "    df = df.dropna(subset=['x', 'y'])\n"
+                "  Ne jamais passer un DataFrame avec NaN aux fonctions spatiales.\n"
                 "- Reprojette toutes les couches géographiques vers EPSG:32632 dès le chargement.\n"
                 "- Effectue l'IDW et le masquage en 1D. Reshape en 2D uniquement pour contourf.\n"
-                "- N'utilise JAMAIS Point() de shapely. Utilise gpd.points_from_xy() à la place.\n"
+                "- MASQUAGE SPATIAL 1D OBLIGATOIREMENT VECTORISÉ : \n"
+                "  Ne fais JAMAIS de boucle `for x, y in grid_points` ou de création d'objets `Point()`.\n"
+                "  Utilise EXCLUSIVEMENT :\n"
+                "  `from shapely.vectorized import contains`\n"
+                "  `mask_1d = contains(geom, grid_points[:, 0], grid_points[:, 1])`\n"
                 "- Applique np.ma.masked_invalid(z_2d) après le reshape.\n"
-                "- Trace les limites des gouvernorats avec gdf_gouv_all.boundary.plot(ax=ax, ...) uniquement.\n"
-                "- Ne fais jamais d'appel à boundary.plot() sur un GeoDataFrame de points (comme les stations).\n"
-                "- Si tu utilises une colorbar avec des niveaux discrets, assure-toi que le nombre de labels correspond exactement au nombre de ticks/niveaux ou utilise ax.legend() avec des Patches.\n"
+                "- GOUVERNORATS : Trace les limites ET affiche OBLIGATOIREMENT le nom de chaque gouvernorat au centre de son polygone avec `for _, g_row in gdf_gouv.iterrows(): cent = g_row.geometry.centroid; g_name = g_row.get('lib_fr', g_row.get('nom', '')); ax.text(cent.x, cent.y, str(g_name), fontsize=5.5, ha='center', va='center', color='#2c3e50', fontweight='bold', alpha=0.65)`.\n"
+                "- STATIONS : Trace OBLIGATOIREMENT les points des stations de mesure par-dessus la carte avec `ax.scatter(df['x'], df['y'], s=12, color='#c0392b', marker='o', zorder=5)`.\n"
+                "- DÉSACTIVATION SCIENTIFIQUE 1e6 : Applique OBLIGATOIREMENT `formatter_y = ScalarFormatter(useOffset=False); formatter_y.set_scientific(False); ax.yaxis.set_major_formatter(formatter_y)` et de même sur `ax.xaxis`.\n"
+                "- ÉCHELLE AXES (REQUIS EXCLUSIF) : N'utilise JAMAIS les mots 'Longitude' ou 'Latitude'. Utilise EXCLUSIVEMENT `ax.set_xlabel('X (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')` et `ax.set_ylabel('Y (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')`.\n"
+                "- PALETTE & INTERVALLES NORMALISÉS :\n"
+                "    * Palette 8 couleurs : `couleurs = ['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']` (Bleu foncé pour le max, dégradé vers vert, jaune, rouge, et le dernier intervalle sans couleur 'none').\n"
+                "    * Période < 1 mois (journalier) : `niveaux = [0, 5, 10, 20, 30, 50, 75, 100, 150]` (<5 à >100 mm).\n"
+                "    * Période 1 mois à < 1 an (mensuel/saisonnier) : `niveaux = [0, 20, 50, 75, 100, 150, 200, 250, 350]` (<20 à >250 mm).\n"
+                "    * Période >= 1 an (annuel/total) : `niveaux = [0, 50, 100, 200, 400, 600, 800, 1000, 1200]` (<50 à >1200 mm).\n"
+                "- ÉCHELLE GRADUATIONS : Les chiffres des axes X et Y doivent TOUS être inclinés à 45° et en style italique.\n"
+                "- DIRECTIONS : Affiche TOUJOURS une boussole / rose des vents (N, S, E, O) dans le coin supérieur droit.\n"
+                "- LÉGENDE : Utilise Patches `Patch(facecolor=couleurs[i], label=f'{niveaux[i]} - {niveaux[i+1]} mm' if i < len(niveaux)-2 else f'> {niveaux[i]} mm')`.\n"
                 "- Sauvegarde la figure en utilisant plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight').\n"
                 "- Utilise plt.close() à la fin.\n\n"
             )
 
         # Aiguillage selon le provider choisi (on passe un prompt épuré sans balises ChatML)
-        if self.llm_provider in ["groq", "openai", "ollama", "openrouter"]:
+        if self.llm_provider != "local":
             api_prompt = (
                 f"{context}\n\n"
                 f"### Instruction :\n{prompt}\n\n"
@@ -215,14 +320,27 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
                 + skeleton
                 + "\n```"
             )
+            print("\n" + "="*80)
+            print(f"[SIG Agent -> Prompt Transmis au LLM (Génération)] Provider: {self.llm_provider.upper()}")
+            print("-" * 80)
+            print(api_prompt)
+            print("="*80 + "\n")
+
+            if self.provider_manager:
+                try:
+                    raw = self.provider_manager.call_llm_api(self.llm_provider, api_prompt)
+                    return self._clean_code(raw)
+                except Exception as e:
+                    print(f"[SIG Agent] Avertissement échec ProviderManager ({e}). Repli sur l'API directe.")
+
             if self.llm_provider == "groq":
                 return self._call_groq_api(api_prompt)
             elif self.llm_provider == "openai":
                 return self._call_openai_api(api_prompt)
-            elif self.llm_provider == "ollama":
+            elif self.llm_provider in ["ollama", "colab", "kaggle"]:
                 return self._call_ollama_api(api_prompt)
-            elif self.llm_provider == "openrouter":
-                return self._call_openrouter_api(api_prompt)
+            else:
+                return self._clean_code(self._call_openrouter_api(api_prompt))
 
         # Mode Local par défaut (VisCoder avec balises ChatML)
         model_prompt = (
@@ -260,8 +378,31 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
         raw_output = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         return self._clean_code(raw_output)
 
-    def generate_correction(self, code: str, error: str) -> str:
-        """Génère un code corrigé à partir d'un code ayant échoué et de son exception."""
+    def generate_correction(
+        self, 
+        code: str, 
+        error: str, 
+        vector_context: Optional[Dict[str, Any]] = None,
+        prompt: Optional[str] = None
+    ) -> str:
+        """Génère un code corrigé à partir d'un code ayant échoué, de son exception et du contexte RAG Zvec.
+
+        Args:
+            code (str): Code Python initial ayant échoué.
+            error (str): Message d'erreur ou traceback issu de la Sandbox.
+            vector_context (Optional[Dict[str, Any]]): Contexte RAG pré-calculé (ou None).
+            prompt (Optional[str]): Prompt utilisateur d'origine pour retrieval RAG dynamique si besoin.
+
+        Returns:
+            str: Code Python corrigé, complet et autonome.
+        """
+        # Retrieval dynamique si non fourni mais prompt présent
+        if not vector_context and prompt:
+            vector_context = self._retrieve_zvec_context(prompt)
+
+        # Injection synthétique du contexte RAG Zvec dans le prompt de correction
+        rag_context = self._format_rag_context(vector_context)
+
         hints = []
         error_lower = error.lower()
         if "take_1d" in error_lower or "take_nd" in error_lower:
@@ -272,6 +413,13 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
             hints.append("\n💡 INDICE : le fichier s'appelle 'Gouvernorats.shp'.")
         if "buffer has wrong number of dimensions" in error_lower:
             hints.append("\n💡 INDICE : contains() exige des coordonnées 1D.")
+        if "finite" in error_lower or "nan or inf" in error_lower or "ckdtree" in error_lower:
+            hints.append(
+                "\n💡 INDICE CRITIQUE : Le DataFrame contient des valeurs NaN dans les colonnes de coordonnées (x, y) ou de valeur.\n"
+                "  OBLIGATOIRE : Ajoute IMMÉDIATEMENT après le chargement du DataFrame (pd.read_sql) :\n"
+                "    df = df.dropna(subset=['x', 'y', '[colonne_valeur]'])\n"
+                "  Ces lignes doivent être placées AVANT tout appel à cKDTree, np.meshgrid, ou idw."
+            )
         
         hint_block = "\n".join(hints) if hints else ""
 
@@ -283,21 +431,35 @@ Code d'origine :
 ```python
 {code}
 ```
+{rag_context}
 {hint_block}
 
 Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sans explications.
 """
 
-        # Aiguillage pour correction via API Cloud
-        if self.llm_provider in ["groq", "openai", "ollama", "openrouter"]:
+        # Aiguillage pour correction via API Cloud ou Tunnel ProviderManager
+        if self.llm_provider != "local":
+            print("\n" + "="*80)
+            print(f"[SIG Agent -> Prompt Transmis au LLM (Auto-Correction)] Provider: {self.llm_provider.upper()}")
+            print("-" * 80)
+            print(task)
+            print("="*80 + "\n")
+
+            if self.provider_manager:
+                try:
+                    raw = self.provider_manager.call_llm_api(self.llm_provider, task)
+                    return self._clean_code(raw)
+                except Exception as e:
+                    print(f"[SIG Agent] Avertissement échec ProviderManager ({e}). Repli sur l'API directe.")
+
             if self.llm_provider == "groq":
                 return self._call_groq_api(task)
             elif self.llm_provider == "openai":
                 return self._call_openai_api(task)
-            elif self.llm_provider == "ollama":
+            elif self.llm_provider in ["ollama", "colab", "kaggle"]:
                 return self._call_ollama_api(task)
-            elif self.llm_provider == "openrouter":
-                return self._call_openrouter_api(task)
+            else:
+                return self._clean_code(self._call_openrouter_api(task))
 
         # Mode local correction
         model_prompt = (
@@ -394,8 +556,15 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
         return self._clean_code(res.json()["choices"][0]["message"]["content"])
 
     def _call_ollama_api(self, prompt: str) -> str:
-        """Appelle Ollama localement."""
-        url = f"{self.ollama_url}/api/generate"
+        """Appelle Ollama / Kaggle GPU / Colab via API distante."""
+        base_url = self.ollama_url.rstrip("/")
+        headers = {
+            "ngrok-skip-browser-warning": "true",
+            "Bypass-Tunnel-Remainder": "true",
+            "User-Agent": "CartaGenAgent/1.0",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
         payload = {
             "model": self.ollama_model,
             "prompt": prompt,
@@ -404,16 +573,74 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
                 "temperature": 0.1
             }
         }
-        res = requests.post(url, json=payload, timeout=45)
-        res.raise_for_status()
-        return self._clean_code(res.json()["response"])
+
+        urls = [f"{base_url}/generate", f"{base_url}/api/generate", base_url]
+        last_err = None
+        for url in urls:
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=180)
+                if res.status_code == 404:
+                    continue
+                res.raise_for_status()
+                data = res.json()
+                if "response" in data:
+                    return self._clean_code(data["response"])
+                elif "generated_text" in data:
+                    return self._clean_code(data["generated_text"])
+                elif "text" in data:
+                    return self._clean_code(data["text"])
+                elif "choices" in data:
+                    return self._clean_code(data["choices"][0]["message"]["content"])
+                else:
+                    return self._clean_code(str(data))
+            except Exception as e:
+                last_err = e
+
+        if last_err:
+            raise last_err
 
     def _clean_code(self, text: str) -> str:
-        if "```python" in text:
-            return text.split("```python")[1].split("```")[0].strip()
-        if "```" in text:
-            return text.split("```")[1].strip()
-        return text.strip()
+        """Extrait le code Python pur depuis la réponse LLM.
+
+        Gère tous les cas : simple ```python```, double imbrication (```python\\n```python),
+        bavardage du LLM avant/après, balises ChatML résiduelles, et code nu sans balises.
+        """
+        import re
+
+        # 1. Supprimer les balises ChatML résiduelles
+        text = re.sub(r'<\|im_(start|end)\|>(system|user|assistant)?', '', text)
+        text = text.strip()
+
+        # 2. Si ```python présent → extraire après le DERNIER marqueur ```python
+        #    (consomme toutes les imbrications : ```python\n```python\n... → prend le dernier)
+        if '```python' in text:
+            parts = text.split('```python')
+            # Tout ce qui suit le dernier ```python
+            inner = parts[-1]
+            # Couper à la PREMIÈRE occurrence de ``` (fermeture du bloc de code interne)
+            if '```' in inner:
+                inner = inner[:inner.find('```')]
+            return inner.strip()
+
+        # 3. Balise ``` générique (sans 'python')
+        if '```' in text:
+            parts = text.split('```')
+            # Le code est dans les parties à index impair (1, 3, 5, ...)
+            for i in range(1, len(parts), 2):
+                candidate = parts[i].strip()
+                if candidate:
+                    return candidate
+
+        # 4. Code nu sans balises
+        # Supprimer les lignes "```" résiduelles en tête/queue
+        lines = text.splitlines()
+        while lines and lines[0].strip() in ('```python', '```', '~~~python', '~~~'):
+            lines.pop(0)
+        while lines and lines[-1].strip() in ('```', '~~~'):
+            lines.pop()
+
+        return '\n'.join(lines).strip()
+
 
     # Définition des squelettes d'injection (Mono, Single Gouv, etc.)
     def _skeleton_mono(self) -> str:
@@ -422,12 +649,12 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "import numpy as np\n"
             "import geopandas as gpd\n"
             "import matplotlib.pyplot as plt\n"
-            "from scipy.spatial import cKDTree\n"
-            "from shapely.vectorized import contains\n"
+            "from matplotlib.ticker import ScalarFormatter\n"
             "from matplotlib.colors import ListedColormap, BoundaryNorm\n"
             "from matplotlib.patches import Patch\n"
             "import sqlalchemy\n"
             "import os\n"
+            "from shapely.vectorized import contains\n"
             "\n"
             "# Connexion unique via SQLAlchemy\n"
             "engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])\n"
@@ -444,25 +671,31 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "target_col = '[colonne_cible]'\n"
             "titre_carte = '[titre_carte]'\n"
             "\n"
-            "# 3. Nettoyage des données\n"
-            "df = df.dropna(subset=[target_col])\n"
+            "# 3. Nettoyage des données et reprojection intelligente des coordonnées en mètres (EPSG:32632)\n"
+            "if target_col not in df.columns or target_col in ['id', 'x', 'y']:\n"
+            "    df[target_col] = 1.0\n"
+            "df = df.dropna(subset=[target_col, 'x', 'y'])\n"
             "df = df.reset_index(drop=True)\n"
             "if df.empty:\n"
-            "    raise ValueError(f\"Aucune donn\u00e9e disponible pour la colonne '{target_col}'\")\n"
+            "    raise ValueError(f\"Aucune donnée disponible pour la colonne '{target_col}'\")\n"
+            "if not df.empty and df['x'].abs().max() <= 180:\n"
+            "    gdf_st_proj = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs='EPSG:4326').to_crs('EPSG:32632')\n"
+            "    df['x'] = gdf_st_proj.geometry.x\n"
+            "    df['y'] = gdf_st_proj.geometry.y\n"
             "\n"
-            "if target_col == 'total':\n"
-            "    niveaux = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500]\n"
-            "    labels  = ['<100 mm','100-200','200-300','300-400','400-500','500-600','600-800','800-1000','1000-1200','>1200 mm']\n"
-            "elif target_col in ['auto', 'hiver', 'print', 'ete']:\n"
-            "    niveaux = [0, 25, 50, 75, 100, 125, 188, 250, 375, 500, 750]\n"
-            "    labels  = ['<25 mm','25-50','50-75','75-100','100-125','125-188','188-250','250-375','375-500','>500 mm']\n"
-            "elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece']:\n"
-            "    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]\n"
-            "    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']\n"
+            "# Niveaux par catégories de période :\n"
+            "# < 1 mois (journalier) : <5 à >100\n"
+            "# 1 mois à < 1 an (mensuel/saisonnier) : <20 à >250\n"
+            "# >= 1 an (annuel/total) : <50 à >1200\n"
+            "if target_col in ['jour', 'valeur_mm', 'valeur', 'jour_mm', 'debit'] or (isinstance(target_col, str) and ('jour' in target_col or 'day' in target_col)):\n"
+            "    niveaux = [0, 5, 10, 20, 30, 50, 75, 100, 150]\n"
+            "elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece','auto','hiver','print','ete']:\n"
+            "    niveaux = [0, 20, 50, 75, 100, 150, 200, 250, 350]\n"
             "else:\n"
-            "    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]\n"
-            "    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']\n"
-            "couleurs = ['#ff0000','#8B4513','#F5DEB3','#FFFF00','#90EE90','#7CCD7C','#228B22','#0000FF','#8A2BE2','#4B0082']\n"
+            "    niveaux = [0, 50, 100, 200, 400, 600, 800, 1000, 1200]\n"
+            "\n"
+            "# 8 couleurs standardisées : du bleu foncé pour le max vers le vert, jaune, rouge, et premier intervalle sans couleur ('none')\n"
+            "couleurs = ['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']\n"
             "cmap = ListedColormap(couleurs)\n"
             "norm = BoundaryNorm(niveaux, cmap.N)\n"
             "\n"
@@ -490,19 +723,44 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)\n"
             "z_2d = np.ma.masked_invalid(z_2d)\n"
             "\n"
-            "fig, ax = plt.subplots(figsize=(9, 11))\n"
+            "fig, ax = plt.subplots(figsize=(7, 9))\n"
             "ax.set_aspect('equal')\n"
-            "gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)\n"
-            "gdf_gouv.boundary.plot(ax=ax, color='grey', linestyle='--', linewidth=0.8)\n"
-            "ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.7, extend='max')\n"
-            "cl = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='black', linewidths=0.6)\n"
-            "ax.clabel(cl, inline=True, fontsize=8, fmt='%d mm')\n"
-            "legend_elements = [Patch(facecolor=c, label=l) for c, l in zip(couleurs, labels)]\n"
-            "ax.legend(handles=legend_elements, title='Précipitations', loc='lower right', fontsize=9)\n"
+            "gdf_pays.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5, zorder=4)\n"
+            "gdf_gouv.plot(ax=ax, facecolor='none', edgecolor='grey', linewidth=0.5, linestyle='--', zorder=3)\n"
+            "for _, g_row in gdf_gouv.iterrows():\n"
+            "    cent = g_row.geometry.centroid\n"
+            "    g_name = g_row.get('lib_fr', g_row.get('nom', ''))\n"
+            "    if g_name:\n"
+            "        ax.text(cent.x, cent.y, str(g_name), fontsize=5.5, ha='center', va='center', color='#2c3e50', fontweight='bold', alpha=0.65, zorder=6)\n"
+            "cf = ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.75, extend='max', zorder=1)\n"
+            "cs = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='#2c3e50', linewidths=0.6, zorder=2)\n"
+            "ax.clabel(cs, inline=True, fontsize=7, fmt='%d mm')\n"
+            "ax.scatter(df['x'], df['y'], s=12, color='#c0392b', marker='o', zorder=5)\n"
             "ax.set_xlim(bounds[0] - margin, bounds[2] + margin)\n"
             "ax.set_ylim(bounds[1] - margin, bounds[3] + margin)\n"
-            "ax.set_title(titre_carte, fontsize=13, fontweight='bold')\n"
+            "ax.set_title(titre_carte, fontsize=12, fontweight='bold', pad=10)\n"
+            "ax.set_xlabel('X (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')\n"
+            "ax.set_ylabel('Y (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')\n"
+            "\n"
+            "formatter_y = ScalarFormatter(useOffset=False)\n"
+            "formatter_y.set_scientific(False)\n"
+            "ax.yaxis.set_major_formatter(formatter_y)\n"
+            "formatter_x = ScalarFormatter(useOffset=False)\n"
+            "formatter_x.set_scientific(False)\n"
+            "ax.xaxis.set_major_formatter(formatter_x)\n"
+            "\n"
+            "ax.tick_params(axis='x', rotation=45, labelsize=8)\n"
+            "ax.tick_params(axis='y', rotation=45, labelsize=8)\n"
+            "for tick in ax.get_xticklabels() + ax.get_yticklabels():\n"
+            "    tick.set_fontstyle('italic')\n"
             "ax.grid(True, linestyle='--', alpha=0.3)\n"
+            "cx, cy, csize = 0.92, 0.88, 0.05\n"
+            "ax.annotate('N', xy=(cx, cy + csize), xytext=(cx, cy), arrowprops=dict(facecolor='black', edgecolor='black', width=1.5, headwidth=6, headlength=7), ha='center', va='bottom', fontsize=8, fontweight='bold', xycoords='axes fraction', textcoords='axes fraction')\n"
+            "ax.text(cx, cy - csize * 0.4, 'S', transform=ax.transAxes, ha='center', va='top', fontsize=7, fontweight='bold')\n"
+            "ax.text(cx + csize * 0.8, cy + csize * 0.3, 'E', transform=ax.transAxes, ha='left', va='center', fontsize=7, fontweight='bold')\n"
+            "ax.text(cx - csize * 0.8, cy + csize * 0.3, 'O', transform=ax.transAxes, ha='right', va='center', fontsize=7, fontweight='bold')\n"
+            "legend_elements = [Patch(facecolor=couleurs[i], label=f\"{niveaux[i]} - {niveaux[i+1]} mm\" if i < len(niveaux)-2 else f\"> {niveaux[i]} mm\") for i in range(len(niveaux)-1)]\n"
+            "ax.legend(handles=legend_elements, title='Pluviométrie', loc='lower left', fontsize=8, title_fontsize=9, framealpha=0.9)\n"
             "plt.tight_layout()\n"
             "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')\n"
             "plt.close()\n"
@@ -526,10 +784,6 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "df.columns = df.columns.str.lower()\n"
             "\n"
             "# 3. Analyse de données et génération de figures (Seaborn/Matplotlib)\n"
-            "# TODO : Écrire le traitement pandas pour filtrer les colonnes nécessaires selon le prompt\n"
-            "# TODO : Générer l'histogramme, courbe ou diagramme demandé\n"
-            "# TODO : Sauvegarder la figure avec : plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')\n"
-            "# TODO : Sauvegarder le tableau de données si pertinent avec : df_result.to_html('output_table.html', index=False, classes='analysis-table')\n"
             "plt.tight_layout()\n"
             "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')\n"
             "plt.close()\n"
@@ -544,6 +798,7 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "import unicodedata\n"
             "from scipy.spatial import cKDTree\n"
             "from shapely.vectorized import contains\n"
+            "from matplotlib.ticker import ScalarFormatter\n"
             "from matplotlib.colors import ListedColormap, BoundaryNorm\n"
             "from matplotlib.patches import Patch\n"
             "import sqlalchemy\n"
@@ -574,12 +829,18 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             f"    raise ValueError(f'Gouvernorat {{NOM_GOUV}} non trouve dans la table gouvernorats')\n"
             "\n"
             "# 4. Nettoyage des données\n"
-            "df = df.dropna(subset=[target_col])\n"
+            "if target_col not in df.columns or target_col in ['id', 'x', 'y']:\n"
+            "    df[target_col] = 1.0\n"
+            "df = df.dropna(subset=[target_col, 'x', 'y'])\n"
             "df = df.reset_index(drop=True)\n"
             "if df.empty:\n"
             "    raise ValueError(f\"Aucune donnée disponible pour la colonne '{target_col}'\")\n"
             "\n"
-            "# 5. Filtrage spatial des stations dans le gouvernorat\n"
+            "# 5. Reprojection intelligente des stations et filtrage spatial dans le gouvernorat\n"
+            "if not df.empty and df['x'].abs().max() <= 180:\n"
+            "    gdf_st_proj = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs='EPSG:4326').to_crs('EPSG:32632')\n"
+            "    df['x'] = gdf_st_proj.geometry.x\n"
+            "    df['y'] = gdf_st_proj.geometry.y\n"
             "gdf_stations = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs=\"EPSG:32632\")\n"
             "gdf_stations_gouv = gpd.sjoin(gdf_stations, gdf_cible[['geometry']], how=\"inner\", predicate=\"within\")\n"
             "df_stations_cible = df.loc[df.index.isin(gdf_stations_gouv.index)].copy()\n"
@@ -617,39 +878,58 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             "z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)\n"
             "z_2d = np.ma.masked_invalid(z_2d)\n"
             "\n"
-            "if target_col == 'total':\n"
-            "    niveaux = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500]\n"
-            "    labels  = ['<100 mm','100-200','200-300','300-400','400-500','500-600','600-800','800-1000','1000-1200','>1200 mm']\n"
-            "elif target_col in ['auto', 'hiver', 'print', 'ete']:\n"
-            "    niveaux = [0, 25, 50, 75, 100, 125, 188, 250, 375, 500, 750]\n"
-            "    labels  = ['<25 mm','25-50','50-75','75-100','100-125','125-188','188-250','250-375','375-500','>500 mm']\n"
-            "elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece']:\n"
-            "    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]\n"
-            "    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']\n"
+            "if target_col in ['jour', 'valeur_mm', 'valeur', 'jour_mm', 'debit'] or (isinstance(target_col, str) and ('jour' in target_col or 'day' in target_col)):\n"
+            "    niveaux = [0, 5, 10, 20, 30, 50, 75, 100, 150]\n"
+            "elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece','auto','hiver','print','ete']:\n"
+            "    niveaux = [0, 20, 50, 75, 100, 150, 200, 250, 350]\n"
             "else:\n"
-            "    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]\n"
-            "    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']\n"
-            "couleurs = ['#ff0000','#8B4513','#F5DEB3','#FFFF00','#90EE90','#7CCD7C','#228B22','#0000FF','#8A2BE2','#4B0082']\n"
+            "    niveaux = [0, 50, 100, 200, 400, 600, 800, 1000, 1200]\n"
+            "couleurs = ['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']\n"
             "cmap = ListedColormap(couleurs)\n"
             "norm = BoundaryNorm(niveaux, cmap.N)\n"
             "\n"
-            "fig, ax = plt.subplots(figsize=(9, 11))\n"
+            "fig, ax = plt.subplots(figsize=(7, 9))\n"
             "ax.set_aspect('equal')\n"
             "gdf_gouv_all.boundary.plot(ax=ax, color='lightgrey', linestyle='--', linewidth=0.6)\n"
             "gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)\n"
             "gdf_cible.boundary.plot(ax=ax, color='black', linewidth=2.0)\n"
+            "for _, g_row in gdf_gouv_all.iterrows():\n"
+            "    cent = g_row.geometry.centroid\n"
+            "    g_name = g_row.get('lib_fr', g_row.get('nom', ''))\n"
+            "    if g_name:\n"
+            "        ax.text(cent.x, cent.y, str(g_name), fontsize=5.5, ha='center', va='center', color='#2c3e50', fontweight='bold', alpha=0.65, zorder=6)\n"
             "\n"
             "if not np.all(np.isnan(z_2d)):\n"
-            "    ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.75, extend='max')\n"
-            "    cl = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='black', linewidths=0.7)\n"
-            "    ax.clabel(cl, inline=True, fontsize=8, fmt='%d mm')\n"
+            "    cf = ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.75, extend='max')\n"
+            "    cs = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='#2c3e50', linewidths=0.6)\n"
+            "    ax.clabel(cs, inline=True, fontsize=7, fmt='%d mm')\n"
             "\n"
-            "ax.scatter(df_stations_cible['x'], df_stations_cible['y'], s=25, color='red', edgecolor='black', zorder=5, label='Stations')\n"
-            "legend_elements = [Patch(facecolor=c, label=l) for c, l in zip(couleurs, labels)]\n"
-            "ax.legend(handles=legend_elements, title='Précipitations', loc='lower right', fontsize=8)\n"
+            "ax.scatter(df_stations_cible['x'], df_stations_cible['y'], s=12, color='#c0392b', marker='o', zorder=5)\n"
             "ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)\n"
-            "ax.set_title(titre_carte, fontsize=14, fontweight='bold')\n"
+            "ax.set_title(titre_carte, fontsize=12, fontweight='bold', pad=10)\n"
+            "ax.set_xlabel('X (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')\n"
+            "ax.set_ylabel('Y (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')\n"
+            "\n"
+            "formatter_y = ScalarFormatter(useOffset=False)\n"
+            "formatter_y.set_scientific(False)\n"
+            "ax.yaxis.set_major_formatter(formatter_y)\n"
+            "\n"
+            "formatter_x = ScalarFormatter(useOffset=False)\n"
+            "formatter_x.set_scientific(False)\n"
+            "ax.xaxis.set_major_formatter(formatter_x)\n"
+            "\n"
+            "ax.tick_params(axis='x', rotation=45, labelsize=8)\n"
+            "ax.tick_params(axis='y', rotation=45, labelsize=8)\n"
+            "for tick in ax.get_xticklabels() + ax.get_yticklabels():\n"
+            "    tick.set_fontstyle('italic')\n"
             "ax.grid(True, linestyle='--', alpha=0.3)\n"
+            "cx, cy, csize = 0.92, 0.88, 0.05\n"
+            "ax.annotate('N', xy=(cx, cy + csize), xytext=(cx, cy), arrowprops=dict(facecolor='black', edgecolor='black', width=1.5, headwidth=6, headlength=7), ha='center', va='bottom', fontsize=8, fontweight='bold', xycoords='axes fraction', textcoords='axes fraction')\n"
+            "ax.text(cx, cy - csize * 0.4, 'S', transform=ax.transAxes, ha='center', va='top', fontsize=7, fontweight='bold')\n"
+            "ax.text(cx + csize * 0.8, cy + csize * 0.3, 'E', transform=ax.transAxes, ha='left', va='center', fontsize=7, fontweight='bold')\n"
+            "ax.text(cx - csize * 0.8, cy + csize * 0.3, 'O', transform=ax.transAxes, ha='right', va='center', fontsize=7, fontweight='bold')\n"
+            "legend_elements = [Patch(facecolor=couleurs[i], label=f\"{niveaux[i]} - {niveaux[i+1]} mm\" if i < len(niveaux)-2 else f\"> {niveaux[i]} mm\") for i in range(len(niveaux)-1)]\n"
+            "ax.legend(handles=legend_elements, title='Pluviométrie', loc='lower left', fontsize=8, title_fontsize=9, framealpha=0.9)\n"
             "plt.tight_layout()\n"
             "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')\n"
             "plt.close()\n"

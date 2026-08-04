@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Base de données PostgreSQL / PostGIS centrale
+  postgres_db:
+    image: postgis/postgis:15-3.3
+    container_name: cartagen_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dgre2026pass}
+      POSTGRES_DB: ${DB_NAME:-dgre_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-dgre_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Application Web CartaGen (FastAPI Multi-Agents)
+  cartagen_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cartagen_server
+    restart: always
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-dgre2026pass}@postgres_db:5432/${DB_NAME:-dgre_db}
+      HF_TOKEN: ${HF_TOKEN:-""}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-""}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-""}
+      WORKSPACE_ROOT: /app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./sandbox_runs:/app/sandbox_runs
+
+volumes:
+  pgdata:
+    driver: local

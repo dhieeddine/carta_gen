@@ -12,58 +12,67 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Styling principal -->
-    <link rel="stylesheet" href="/static/style.css">
+    <link id="mainStylesheet" rel="stylesheet" href="/static/style.css?v=1.0.2">
+    <script>
+        if (window.location.protocol === 'file:') {
+            document.getElementById('mainStylesheet').href = './style.css';
+        }
+    </script>
 </head>
 <body>
 
     <div class="app-container">
-        
+
         <!-- ========================================== -->
-        <!-- SIDEBAR DE CONTRÔLE (GAUCHE)               -->
+        <!-- SIDEBAR GAUCHE : CHAT ANNUAIRE PERMANENT  -->
         <!-- ========================================== -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="logo-area">
-                    <i class="fa-solid fa-map-location-dot logo-icon"></i>
-                    <h1>CartaGen</h1>
+        <aside class="sidebar" style="width:420px; flex-shrink:0; display:flex; flex-direction:column; padding:20px; gap:16px; background:var(--bg-secondary); border-right:1px solid var(--border-color); height:100vh; box-sizing:border-box;">
+            <div class="sidebar-header" style="display:flex; align-items:center; justify-content:space-between; padding-bottom:12px; border-bottom:1px solid var(--border-color);">
+                <div class="logo-area" style="display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-map-location-dot logo-icon" style="font-size:22px; color:var(--accent-color);"></i>
+                    <h1 style="font-size:20px; font-weight:700; font-family:var(--font-title);">CartaGen</h1>
                 </div>
                 <span class="badge">DGRE Tunisia</span>
             </div>
 
-            <!-- Module de Saisie -->
-            <div class="control-card">
-                <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Saisir votre Consigne</h3>
-                <p class="section-desc">Entrez une instruction en langage naturel pour générer la carte d'isohyètes.</p>
-                
-                <div class="prompt-wrapper">
-                    <textarea id="promptInput" placeholder="Ex: Affiche la carte de pluie pour la saison de l'hiver en Tunisie..."></textarea>
-                    <button id="generateBtn" class="primary-btn">
-                        <span class="btn-text">Générer la Carte</span>
-                        <i class="fa-solid fa-paper-plane btn-icon"></i>
-                        <div class="spinner hidden"></div>
+            <!-- CHAT ANNUAIRE INTERFACE PERMANENTE -->
+            <div class="chat-sidebar-wrapper" style="display:flex; flex-direction:column; flex:1; min-height:0; gap:12px;">
+                <div style="display:flex; align-items:center; justify-content:space-between;">
+                    <h3 style="font-size:1rem; margin:0; font-weight:600; display:flex; align-items:center; gap:8px;">
+                        <i class="fa-solid fa-comments" style="color:var(--accent-color);"></i> Chat Annuaire
+                    </h3>
+                    <button id="indexAnnuaireBtn" class="primary-btn" style="background:var(--accent-secondary, #16a085); padding:6px 12px; font-size:0.8rem; border-radius:6px;">
+                        <i class="fa-solid fa-database btn-icon"></i>
+                        <span class="btn-text">Indexer</span>
+                        <div class="spinner hidden" id="indexSpinner"></div>
                     </button>
                 </div>
-            </div>
+                <p id="indexStatusMsg" class="section-desc" style="margin:0; font-size:0.78rem;"></p>
 
-            <!-- Raccourcis et Suggestions -->
-            <div class="suggestions-area">
-                <h4><i class="fa-solid fa-lightbulb"></i> Exemples de Consignes</h4>
-                <div class="suggestions-grid">
-                    <button class="suggest-chip">Carte de pluie pour le mois de sept</button>
-                    <button class="suggest-chip">Isohyètes d'hiver au gouvernorat de Béja</button>
-                    <button class="suggest-chip">Différence de pluie Hiver - Printemps</button>
-                    <button class="suggest-chip">Carte de densité des stations</button>
+                <!-- Zone des messages du chat -->
+                <div id="chatMessages" class="chat-messages-area" style="
+                    flex:1; min-height:0; overflow-y:auto;
+                    background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.08);
+                    border-radius:10px; padding:12px; display:flex;
+                    flex-direction:column; gap:10px;">
+                    <div class="chat-msg-system" style="
+                        color:rgba(255,255,255,0.5); font-size:0.8rem; text-align:center;
+                        padding:8px; border-radius:6px;">
+                        <i class="fa-solid fa-info-circle"></i>
+                        Posez votre question pluviométrique ci-dessous.
+                    </div>
                 </div>
-            </div>
 
-            <!-- Console de logs des Agents -->
-            <div class="log-console-container">
-                <div class="console-header">
-                    <h4><i class="fa-solid fa-terminal"></i> Console des Agents</h4>
-                    <span id="statusIndicator" class="indicator idle">Prêt</span>
-                </div>
-                <div class="console-body" id="consoleLogs">
-                    <div class="log-line system">[System] Prêt à recevoir une consigne.</div>
+                <!-- Zone de saisie -->
+                <div style="display:flex; gap:8px; align-items:flex-end;">
+                    <textarea id="chatQuestionInput" placeholder="Ex: Total annuel Ain Draham 2018-2019..."
+                        style="flex:1; height:80px; resize:none;
+                        background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+                        border-radius:8px; padding:10px; color:#fff; font-family:inherit; font-size:0.9rem;"></textarea>
+                    <button id="sendChatBtn" class="primary-btn" style="width:48px; height:80px; flex-shrink:0; padding:0; display:flex; justify-content:center; align-items:center; border-radius:8px;" title="Envoyer">
+                        <i class="fa-solid fa-paper-plane" style="margin:0; font-size:1.1rem;"></i>
+                        <div class="spinner hidden" id="chatSpinner"></div>
+                    </button>
                 </div>
             </div>
         </aside>
@@ -71,7 +80,7 @@
         <!-- ========================================== -->
         <!-- ESPACE D'AFFICHAGE DU RÉSULTAT (DROIT)    -->
         <!-- ========================================== -->
-        <main class="main-content">
+        <main class="main-content" style="flex:1; display:flex; flex-direction:column; height:100vh; overflow:hidden;">
             
             <!-- Barre de navigation d'onglets -->
             <header class="tab-header">
@@ -90,6 +99,12 @@
                     </button>
                     <button class="tab-btn" data-tab="historique">
                         <i class="fa-solid fa-history"></i> Historique
+                    </button>
+                    <button class="tab-btn" data-tab="annuaire-yearbook">
+                        <i class="fa-solid fa-book"></i> Annuaire PDF
+                    </button>
+                    <button class="tab-btn" data-tab="ingest-mdb">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Importation MDB
                     </button>
                 </nav>
                 
@@ -175,12 +190,169 @@
                     </div>
                 </div>
 
+                <!-- Onglet 5 : Génération Annuaire PDF -->
+                <div class="tab-content" id="annuaire-yearbook">
+                    <div class="yearbook-generator-container">
+                        <h3><i class="fa-solid fa-book"></i> Générer l'Annuaire Pluviométrique</h3>
+                        <p class="section-desc">Générez un document d'annuaire complet en PDF contenant les cumuls mensuels, saisonniers, cartes d'isohyètes et relevés journaliers détaillés.</p>
+                        
+                        <div class="yearbook-form">
+                            <div class="form-group">
+                                <label for="yearbookYear">Année hydrologique (début) :</label>
+                                <input type="number" id="yearbookYear" value="2021" min="2015" max="2024" placeholder="Ex: 2021">
+                            </div>
+                            <div class="form-group">
+                                <label for="yearbookGouv">Gouvernorat ciblé :</label>
+                                <select id="yearbookGouv">
+                                    <option value="all">Toute la Tunisie (National)</option>
+                                    <option value="Beja">Béja</option>
+                                    <option value="Ben Arous">Ben Arous</option>
+                                    <option value="Bizerte">Bizerte</option>
+                                    <option value="Gabes">Gabès</option>
+                                    <option value="Gafsa">Gafsa</option>
+                                    <option value="Jendouba">Jendouba</option>
+                                    <option value="Kairouan">Kairouan</option>
+                                    <option value="Kasserine">Kasserine</option>
+                                    <option value="Kebeli">Kébili</option>
+                                    <option value="Kef">Le Kef</option>
+                                    <option value="Mahdia">Mahdia</option>
+                                    <option value="Manouba">Manouba</option>
+                                    <option value="Mednine">Médenine</option>
+                                    <option value="Monastir">Monastir</option>
+                                    <option value="Nabeul">Nabeul</option>
+                                    <option value="Sfax">Sfax</option>
+                                    <option value="Sidi Bouzid">Sidi Bouzid</option>
+                                    <option value="Siliana">Siliana</option>
+                                    <option value="Sousse">Sousse</option>
+                                    <option value="Tataouine">Tataouine</option>
+                                    <option value="Tozeur">Tozeur</option>
+                                    <option value="Tunis">Tunis</option>
+                                    <option value="Zaghouan">Zaghouan</option>
+                                    <option value="Ariana">Ariana</option>
+                                </select>
+                            </div>
+                            <button id="generateYearbookBtn" class="primary-btn">
+                                <span class="btn-text">Générer le PDF</span>
+                                <i class="fa-solid fa-file-pdf btn-icon"></i>
+                                <div class="yearbook-spinner hidden"></div>
+                            </button>
+                        </div>
+                        
+                        <div class="yearbook-result-box hidden" id="yearbookResultBox">
+                            <div class="result-card">
+                                <i class="fa-solid fa-file-pdf pdf-large-icon"></i>
+                                <div class="result-details">
+                                    <h4 id="yearbookResultTitle">Annuaire Béja 2021-2022</h4>
+                                    <p>Le document a été généré avec succès en format PDF.</p>
+                                    <a id="downloadYearbookLink" class="primary-btn download-link" href="#" target="_blank">
+                                        Télécharger l'Annuaire
+                                        <i class="fa-solid fa-download"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="yearbook-error-box hidden" id="yearbookErrorBox">
+                            <div class="error-card">
+                                <i class="fa-solid fa-circle-exclamation error-icon"></i>
+                                <div class="error-details">
+                                    <h4>Erreur de génération</h4>
+                                    <p id="yearbookErrorText">Une erreur est survenue lors de la compilation LaTeX.</p>
+                                    <pre id="yearbookErrorLogs" style="margin-top: 10px; background: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 5px; max-height: 200px; overflow-y: auto; text-align: left; font-family: monospace; font-size: 11px;"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Onglet Ingestion MDB -->
+                <div class="tab-content" id="ingest-mdb">
+                    <div class="yearbook-generator-container">
+                        <h3><i class="fa-solid fa-cloud-arrow-up"></i> Ingestion des Données Régionales (.mdb / .accdb)</h3>
+                        <p class="section-desc">Alimentez la base PostgreSQL centrale de la DGRE en important les bases de données MS Access annuelles de votre gouvernorat.</p>
+                        
+                        <form id="ingestMdbForm" class="yearbook-form">
+                            <div class="form-group">
+                                <label for="ingestFile">Fichier MS Access (.mdb / .accdb) :</label>
+                                <input type="file" id="ingestFile" accept=".mdb,.accdb" required style="padding: 10px; border: 1px dashed #3498db; border-radius: 8px;">
+                            </div>
+                            <button type="submit" id="ingestMdbBtn" class="primary-btn">
+                                <span class="btn-text">Démarrer l'Ingestion</span>
+                                <i class="fa-solid fa-upload btn-icon"></i>
+                            </button>
+                        </form>
+                        
+                        <div class="yearbook-result-box hidden" id="ingestResultBox">
+                            <div class="result-card" style="border-left: 4px solid #2ecc71; flex-direction: column; align-items: flex-start; gap: 12px;">
+                                <div style="display: flex; align-items: center;">
+                                    <i class="fa-solid fa-circle-check" style="font-size: 2rem; color: #2ecc71; margin-right: 15px;"></i>
+                                    <div class="result-details">
+                                        <h4 id="ingestResultTitle">Ingestion & Union réussies !</h4>
+                                        <p id="ingestResultMsg">Rapport des mises à jour effectuées sur PostgreSQL.</p>
+                                    </div>
+                                </div>
+                                <div id="ingestReportDetails" style="width: 100%; background: rgba(255,255,255,0.05); padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); font-size: 0.88rem; line-height: 1.7;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </section>
         </main>
 
+    <!-- ========================================== -->
+    <!-- MODAL DE CONFIGURATION DU PROVIDER LLM      -->
+    <!-- ========================================== -->
+    <div id="providerModal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-cloud-bolt"></i> Configurer un Provider LLM / Tunnel</h3>
+                <button type="button" id="closeProviderModalBtn" class="close-btn">&times;</button>
+            </div>
+            <form id="addProviderForm" class="modal-body">
+                <div class="form-group">
+                    <label for="provName">Nom du Provider / Modèle :</label>
+                    <input type="text" id="provName" required placeholder="Ex: Mon Colab GPU, Kaggle Llama 3, OpenRouter Custom...">
+                </div>
+                <div class="form-group">
+                    <label for="provExecType">Type d'Exécution :</label>
+                    <select id="provExecType" class="styled-select">
+                        <option value="colab">Google Colab Tunnel (Ngrok / Localtunnel)</option>
+                        <option value="kaggle">Kaggle Notebook Tunnel (Ngrok / FastAPI)</option>
+                        <option value="ollama">Serveur Local Ollama (http://localhost:11434)</option>
+                        <option value="api_key">Clé API Cloud (Groq, OpenRouter, OpenAI, Custom)</option>
+                        <option value="local">VisCoder2-7B (Local VRAM PyTorch)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="provEndpoint">URL Endpoint / Tunnel (Colab, Kaggle, Ollama, API) :</label>
+                    <input type="text" id="provEndpoint" placeholder="Ex: https://xxxx.ngrok-free.app ou http://localhost:11434">
+                </div>
+                <div class="form-group">
+                    <label for="provModel">Nom du Modèle :</label>
+                    <input type="text" id="provModel" required placeholder="Ex: llama3, meta-llama/llama-3.3-70b-instruct:free, gpt-4o">
+                </div>
+                <div class="form-group">
+                    <label for="provApiKey">Clé API / Token (Optionnel) :</label>
+                    <input type="password" id="provApiKey" placeholder="Ex: sk-or-v1-xxx ou gsk_xxx">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelProviderBtn" class="secondary-btn">Annuler</button>
+                    <button type="submit" class="primary-btn">Enregistrer & Utiliser</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Script de logique -->
-    <script src="/static/app.js"></script>
+    <script>
+        if (window.location.protocol === 'file:') {
+            document.write('<script src="./app.js?v=1.0.2"><\/script>');
+        } else {
+            document.write('<script src="/static/app.js?v=1.0.2"><\/script>');
+        }
+    </script>
 </body>
 </html>

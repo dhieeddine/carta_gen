@@ -40,12 +40,12 @@ def main():
     print("[RESET] Réinitialisation des collections Zvec...")
     v_manager.initialize_collections(dimension=384)
     
-    # 4. Traiter et synchroniser les STATIONS (Stations_Base)
-    print("[FETCH] Récupération des stations de stations_base...")
+    # 4. Traiter et synchroniser les STATIONS (ann_stations)
+    print("[FETCH] Récupération des stations de ann_stations...")
     try:
         query = """
-            SELECT id_station, nom, district, localite, bassin, riviere, gestionnaire 
-            FROM stations_base;
+            SELECT id_station, nom, gouvernorat, bassin, grand_bassin, riviere, altitude 
+            FROM ann_stations;
         """
         df_stations = pd.read_sql(query, engine)
         print(f"[INFO] {len(df_stations)} stations trouvées. Génération des embeddings...")
@@ -54,28 +54,28 @@ def main():
         for index, row in df_stations.iterrows():
             # Remplacer les valeurs nulles
             nom = str(row['nom'] or '').strip()
-            district = str(row['district'] or '').strip()
-            localite = str(row['localite'] or '').strip()
+            gouvernorat = str(row['gouvernorat'] or '').strip()
             bassin = str(row['bassin'] or '').strip()
+            grand_bassin = str(row['grand_bassin'] or '').strip()
             riviere = str(row['riviere'] or '').strip()
-            gestionnaire = str(row['gestionnaire'] or '').strip()
-            id_station = row['id_station']
+            altitude = row['altitude']
+            id_station = str(row['id_station'] or '').strip()
             
-            if not nom or id_station is None:
+            if not nom or not id_station:
                 continue
                 
             # Texte sémantique descriptif de la station
             text_desc = (
-                f"Station: {nom} | ID: {id_station} | District: {district} | "
-                f"Localité: {localite} | Bassin: {bassin} | Rivière: {riviere} | "
-                f"Gestionnaire: {gestionnaire}"
+                f"Station: {nom} | ID: {id_station} | Gouvernorat: {gouvernorat} | "
+                f"Bassin: {bassin} | Grand Bassin: {grand_bassin} | Rivière: {riviere} | "
+                f"Altitude: {altitude}"
             )
             
             # Encoder
             embedding = model.encode(text_desc).tolist()
             
             station_docs.append({
-                "id_station": int(id_station),
+                "id_station": id_station,
                 "nom": nom,
                 "embedding": embedding
             })
@@ -93,36 +93,37 @@ def main():
     print("[FETCH] Préparation de l'indexation des schémas de base de données...")
     schemas = [
         {
-            "table_name": "yasra_data",
-            "description": "Contient les précipitations interpolées mensuelles (janv, fev, mar, avr, mai, juin, juil, aout, sept, octo, nove, dece), saisonnières (hiver, print, ete, auto) et annuelles (total, moy_). Utile pour générer des isohyètes globales ou régionales."
+            "table_name": "ann_pluies",
+            "description": "Données unifiées de précipitations journalières, mensuelles et annuelles de tous les gouvernorats tunisiens (2015-2024). Précipitations (valeur_mm) par date_obs. TOUJOURS utiliser cette table jointe avec ann_stations pour extraire la pluie et générer des cartes d'isohyètes ou des analyses."
         },
         {
-            "table_name": "pluies",
-            "description": "Données brutes de précipitations ou de hauteurs de pluie journalières et horaires enregistrées par les capteurs. Colonnes principales : id_station, date, valeur (pluie en mm), capteur."
+            "table_name": "ann_stations",
+            "description": "Référentiel unifié de toutes les stations des annuaires hydrologiques (2015-2024). Colonnes : id, gouvernorat, source_mdb, type_station, id_station, nom, latitude, longitude, altitude, bassin, grand_bassin, riviere, debut_activite. 3715 stations couvrant 24 gouvernorats."
         },
         {
-            "table_name": "cotes",
-            "description": "Contient les hauteurs d'eau limnimétriques mesurées au cours du temps dans les stations hydrologiques. Colonnes principales : id_station, date, valeur (hauteur en m)."
+            "table_name": "ann_debits",
+            "description": "Débits journaliers unifiés de tous les gouvernorats (2015-2024). Colonnes : id, gouvernorat, source_mdb, id_station, capteur, date_obs (TIMESTAMP), valeur_m3s (m3/s), origine, qualite. ~848k lignes. Jointure avec ann_stations via id_station + gouvernorat."
         },
         {
-            "table_name": "debits",
-            "description": "Mesures temporelles des débits des oueds et cours d'eau. Colonnes principales : id_station, date, valeur (débit en m³/s)."
-        },
-        {
-            "table_name": "stations_base",
-            "description": "Fiche descriptive et administrative de toutes les stations (pluvio, météo ou hydro). Contient : id_station, nom, latitude, longitude, altitude, district, localite, bassin, riviere, gestionnaire."
+            "table_name": "ann_jaugeages",
+            "description": "Jaugeages de terrain unifiés (2015-2024). Colonnes : id, gouvernorat, source_mdb, id_station, date_jaug (TIMESTAMP), hauteur_m (m), debit_m3s (m3/s), commentaire. ~4700 lignes."
         },
         {
             "table_name": "capteurs",
             "description": "Index de tous les capteurs (type_station, id_station, capteur, table, nature, description, unite)."
         },
         {
-            "table_name": "jaugeages",
-            "description": "Contient les mesures de jaugeage en débit et hauteur d'eau pour calibrer les courbes de tarage. Colonnes principales : id_station, date, hauteur, debit, methode."
-        },
-        {
-            "table_name": "equipements",
-            "description": "Liste et état d'installation des équipements sur chaque station. Colonnes : id_station, type_equipement, date_installation, date_retrait, etat."
+            "table_name": "isohyet_map_standard_template",
+            "description": (
+                "Code Python de référence pour générer des cartes isohyètes normalisées (generate_isohyet_map) avec interpolation IDW, "
+                "désactivation de la notation scientifique 1e6 sur les axes UTM (ScalarFormatter(useOffset=False).set_scientific(False)), "
+                "palette standard de 8 couleurs (du bleu foncé pour le max vers le vert, le jaune, le rouge et le 1er intervalle 'none' sans couleur: "
+                "['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']), "
+                "et niveaux par catégories de période (<1 mois: [0, 5, 10, 20, 30, 50, 75, 100, 150] (<5 à >100 mm), "
+                "1 mois à <1 an: [0, 20, 50, 75, 100, 150, 200, 250, 350] (<20 à >250 mm), "
+                ">=1 an: [0, 50, 100, 200, 400, 600, 800, 1000, 1200] (<50 à >1200 mm)), "
+                "boussole / rose des vents (N, S, E, O) et légende par Patches."
+            )
         }
     ]
     

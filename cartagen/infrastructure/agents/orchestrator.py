@@ -3,6 +3,7 @@
 import os
 import time
 from datetime import datetime
+from typing import Optional
 from cartagen.domain.models.map_request import MapRequest, GeneratedMap, ExecutionResult
 from cartagen.infrastructure.database.postgres_connection import PostgresConnectionManager
 from cartagen.infrastructure.sandbox.sandbox_manager import SandboxManager
@@ -10,39 +11,68 @@ from cartagen.infrastructure.agents.sql_generator_agent import SQLGeneratorAgent
 from cartagen.infrastructure.agents.sig_generator_agent import SIGGeneratorAgent
 from cartagen.infrastructure.database.vector_manager import VectorManager
 
+from cartagen.infrastructure.providers.provider_manager import ProviderManager
+
 class CartaGenOrchestrator:
-    """Orchestrateur central multi-agents de CartaGen (Supervisor Pattern)."""
+    """Orchestrateur central responsable de la coordination du workflow multi-agents."""
 
     def __init__(self, database_url: str, hf_token: str, shapefiles_dir: str, workspace_root: str):
         self.db_manager = PostgresConnectionManager(database_url)
         self.sandbox = SandboxManager(workspace_root, database_url)
         self.shapefiles_dir = shapefiles_dir
         
-        # Initialisation de Zvec Vector DB
+        # Initialisation de Zvec Vector DB & Provider Manager
         self.vector_manager = VectorManager(workspace_root)
         self.vector_manager.load_collections()
+        self.provider_manager = ProviderManager(workspace_root)
         
         # Initialisation des Agents
         self.sql_agent = SQLGeneratorAgent(
             gouv_col="lib_fr",
-            reg_col="libelle"
+            reg_col="libelle",
+            provider_manager=self.provider_manager
         )
-        self.sig_agent = SIGGeneratorAgent(hf_token, self.db_manager)
+        self.sig_agent = SIGGeneratorAgent(
+            hf_token, 
+            self.db_manager, 
+            vector_manager=self.vector_manager,
+            provider_manager=self.provider_manager
+        )
 
-    def process_request(self, request: MapRequest) -> GeneratedMap:
-        """Exécute le cycle complet de traitement multi-agents."""
-        # Récupération des informations sur le modèle actif
-        provider = self.sig_agent.llm_provider.upper()
-        if self.sig_agent.llm_provider == "groq":
-            model_name = self.sig_agent.groq_model
-        elif self.sig_agent.llm_provider == "openai":
-            model_name = self.sig_agent.openai_model
-        elif self.sig_agent.llm_provider == "openrouter":
-            model_name = self.sig_agent.openrouter_model
-        elif self.sig_agent.llm_provider == "ollama":
-            model_name = self.sig_agent.ollama_model
+    def process_request(self, request: MapRequest, llm_provider: Optional[str] = None) -> GeneratedMap:
+        """Exécute le cycle complet de traitement multi-agents.
+        
+        Args:
+            request: La requête de carte à traiter.
+            llm_provider: ID du provider LLM à utiliser (ex: 'kaggle', 'openrouter', 'groq').
+                          Si None, utilise LLM_PROVIDER depuis .env.
+        """
+        # ── Résolution du provider actif ──────────────────────────────────────────
+        # Recharger .env pour capturer les modifications en cours de session
+        from dotenv import load_dotenv
+        import os as _os
+        load_dotenv(dotenv_path=_os.path.join(self.sandbox.workspace_root, ".env"), override=True)
+        
+        # 1) Provider explicite du frontend (payload), 2) fallback .env, 3) dernier recours openrouter
+        env_provider = _os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
+        active_provider = llm_provider.lower().strip() if llm_provider else env_provider
+
+        if self.provider_manager and active_provider in self.provider_manager.providers:
+            pinfo = self.provider_manager.providers[active_provider]
+            provider = pinfo.get("name", active_provider).upper()
+            model_name = pinfo.get("model", "VisCoder2-7B")
         else:
-            model_name = "VisCoder2-7B (Local)"
+            provider = active_provider.upper()
+            if active_provider == "groq":
+                model_name = self.sig_agent.groq_model
+            elif active_provider == "openai":
+                model_name = self.sig_agent.openai_model
+            elif active_provider == "openrouter":
+                model_name = self.sig_agent.openrouter_model
+            elif active_provider == "ollama":
+                model_name = self.sig_agent.ollama_model
+            else:
+                model_name = "VisCoder2-7B (Local)"
 
         print("="*80)
         print(f"[Orchestrator] Démarrage du traitement de la requête : '{request.prompt}'")
@@ -64,14 +94,16 @@ class CartaGenOrchestrator:
             print(f"[Orchestrator] Erreur de recherche Zvec : {e}")
 
         # 1. Génération de la requête SQL d'extraction
-        print(f"[Orchestrator -> SQL Agent] Transmission de la requête utilisateur '{request.prompt}'")
+        print(f"[Orchestrator -> SQL Agent] Transmission de la requête utilisateur '{request.prompt}' | Provider: {active_provider}")
+        self.sql_agent.llm_provider = active_provider
         sql_query, target_col = self.sql_agent.generate_query(request.prompt, vector_context)
         prompt_type = self.sig_agent.detect_prompt_type(request.prompt)
         print(f"[SQL Agent -> Orchestrator] Requête SQL générée :\n---\n{sql_query}\n---")
         print(f"[SQL Agent -> Orchestrator] Colonne cible : '{target_col}' | Type de prompt : '{prompt_type}'")
         
         # 2. Génération initiale du code Python SIG
-        print(f"[Orchestrator -> SIG Agent] Appel de la génération de code Python. Modèle actif : {model_name}...")
+        print(f"[Orchestrator -> SIG Agent] Appel de la génération de code Python. Provider: {active_provider} | Modèle: {model_name}...")
+        self.sig_agent.llm_provider = active_provider
         code = self.sig_agent.generate_code(request.prompt, sql_query, vector_context)
         
         # Injection de la requête SQL réelle dans le code généré
@@ -91,12 +123,12 @@ class CartaGenOrchestrator:
         if not exec_res.success:
             print(f"[Sandbox -> Orchestrator] Message d'erreur : {exec_res.error_message}")
         
-        # 4. Cycle d'auto-correction en boucle fermée (Refinement Loop)
+        # 4. Cycle d'auto-correction en boucle fermée (Refinement Loop avec injection RAG)
         if not exec_res.success:
             print(f"[Orchestrator -> Quality Agent] Échec détecté dans la Sandbox. Lancement de la boucle d'auto-correction...")
             for attempt in range(1, 3):
                 print(f"[Quality Agent -> SIG Agent] Tentative de correction {attempt}/2 via {model_name}...")
-                code = self.sig_agent.generate_correction(code, exec_res.error_message)
+                code = self.sig_agent.generate_correction(code, exec_res.error_message, vector_context=vector_context, prompt=request.prompt)
                 
                 # Ré-exécution
                 print(f"[Orchestrator -> Sandbox] Ré-exécution du code corrigé...")
