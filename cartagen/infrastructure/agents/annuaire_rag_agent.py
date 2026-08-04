@@ -93,6 +93,9 @@ class AnnuaireRAGAgent:
         self.vector_manager = vector_manager
         self.provider_manager = provider_manager
         self.llm_provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+        self.last_system_prompt = ""
+        self.last_user_prompt = ""
+        self.last_response = "" 
 
     def _get_connection(self):
         return psycopg2.connect(self.database_url)
@@ -581,13 +584,19 @@ class AnnuaireRAGAgent:
 
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """Appelle le LLM via le provider_manager."""
+        self.last_system_prompt = system_prompt
+        self.last_user_prompt = user_prompt
         try:
-            return self.provider_manager.call_llm_api(
+            res = self.provider_manager.call_llm_api(
                 self.llm_provider, user_prompt, system_prompt
             )
+            self.last_response = res
+            return res
         except Exception as e:
             print(f"[AnnuaireRAG] Erreur LLM ({self.llm_provider}): {e}")
-            return f"[Erreur LLM: {str(e)}] Données disponibles dans les sources."
+            err_msg = f"[Erreur LLM: {str(e)}] Données disponibles dans les sources."
+            self.last_response = err_msg
+            return err_msg
 
     # ── Pipeline principal ────────────────────────────────────────────────────
 
@@ -634,10 +643,18 @@ class AnnuaireRAGAgent:
 
         answer_text = self._call_llm(system_prompt, user_prompt)
 
+        agent_traces = {
+            "annuaire_rag_agent": {
+                "system_prompt": getattr(self, "last_system_prompt", ""),
+                "user_prompt": getattr(self, "last_user_prompt", ""),
+                "response": getattr(self, "last_response", "")
+            }
+        }
         return {
             "answer": answer_text.strip(),
             "sources": list(set(sources)),
             "nb_passages": len(passages),
             "images": detected_images,
-            "table_html": table_html
+            "table_html": table_html,
+            "agent_traces": agent_traces
         }
