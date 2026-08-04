@@ -97,6 +97,9 @@
                     <button class="tab-btn" data-tab="requete-sql">
                         <i class="fa-solid fa-database"></i> Requête SQL
                     </button>
+                    <button class="tab-btn" data-tab="agents-workflow">
+                        <i class="fa-solid fa-robot"></i> Traces Agents
+                    </button>
                     <button class="tab-btn" data-tab="historique">
                         <i class="fa-solid fa-history"></i> Historique
                     </button>
@@ -173,6 +176,27 @@
                             </button>
                         </div>
                         <pre><code id="sqlQueryDisplay">-- En attente de génération...</code></pre>
+                    </div>
+                </div>
+
+                <!-- Onglet Traces Agents -->
+                <div class="tab-content" id="agents-workflow">
+                    <div class="agents-workflow-container" style="padding: 20px; display: flex; flex-direction: column; gap: 20px; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-color);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                            <div>
+                                <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; display: flex; align-items: center; gap: 10px;">
+                                    <i class="fa-solid fa-robot" style="color: var(--primary-color);"></i> Communication & Traces Multi-Agents
+                                </h3>
+                                <p style="color: var(--text-muted); margin: 5px 0 0 0; font-size: 13px;">Consultez les prompts système, les prompts utilisateur et les réponses échangées entre l'orchestrateur et les agents.</p>
+                            </div>
+                        </div>
+                        
+                        <div id="workflowAgentsDisplay" style="display: flex; flex-direction: column; gap: 20px;">
+                            <div class="placeholder-view" id="workflowPlaceholder" style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                                <i class="fa-solid fa-network-wired" style="font-size: 40px; margin-bottom: 15px; color: var(--border-color);"></i>
+                                <p style="margin: 0; font-size: 14px;">Soumettez un prompt ou lancez une analyse pour visualiser le workflow détaillé des agents.</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

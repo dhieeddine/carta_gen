@@ -161,13 +161,15 @@ def run_async_generation(request: MapRequest, selected_provider: Optional[str] =
                 "code": generated_map.python_code,
                 "sql": generated_map.sql_query,
                 "execution_time": generated_map.execution_details.execution_time,
-                "table_html": generated_map.table_html
+                "table_html": generated_map.table_html,
+                "agent_traces": generated_map.agent_traces
             })
         else:
             task_registry[task_id].update({
                 "status": "failed",
                 "error": generated_map.execution_details.error_message,
-                "code": generated_map.python_code
+                "code": generated_map.python_code,
+                "agent_traces": generated_map.agent_traces
             })
     except Exception as e:
         task_registry[task_id].update({

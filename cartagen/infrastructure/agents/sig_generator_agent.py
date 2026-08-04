@@ -33,6 +33,12 @@ class SIGGeneratorAgent:
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+        self.last_system_prompt = ""
+        self.last_user_prompt = ""
+        self.last_response = ""
+        self.last_correction_system_prompt = ""
+        self.last_correction_user_prompt = ""
+        self.last_correction_response = "" 
         self.ollama_url = os.getenv("OLLAMA_COLAB_URL", "http://localhost:11434")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
         
@@ -326,21 +332,30 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
             print(api_prompt)
             print("="*80 + "\n")
 
+            self.last_system_prompt = constraints + "\n\n### SQUELETTE DE CODE :\n" + skeleton
+            self.last_user_prompt = context + "\n\n### Instruction :\n" + prompt
             if self.provider_manager:
                 try:
                     raw = self.provider_manager.call_llm_api(self.llm_provider, api_prompt)
+                    self.last_response = raw
                     return self._clean_code(raw)
                 except Exception as e:
                     print(f"[SIG Agent] Avertissement échec ProviderManager ({e}). Repli sur l'API directe.")
 
             if self.llm_provider == "groq":
-                return self._call_groq_api(api_prompt)
+                raw = self._call_groq_api(api_prompt)
+                self.last_response = raw
+                return raw
             elif self.llm_provider == "openai":
-                return self._call_openai_api(api_prompt)
+                raw = self._call_openai_api(api_prompt)
+                self.last_response = raw
+                return raw
             elif self.llm_provider in ["ollama", "colab", "kaggle"]:
                 return self._call_ollama_api(api_prompt)
             else:
-                return self._clean_code(self._call_openrouter_api(api_prompt))
+                raw = self._call_openrouter_api(api_prompt)
+                self.last_response = raw
+                return self._clean_code(raw)
 
         # Mode Local par défaut (VisCoder avec balises ChatML)
         model_prompt = (
@@ -376,6 +391,9 @@ Les couches géographiques (limite_pays_polygon, gouvernorats, rgion_hydrographi
         
         generated_ids = outputs[0][input_len:]
         raw_output = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        self.last_system_prompt = constraints + "\n\n### SQUELETTE DE CODE :\n" + skeleton
+        self.last_user_prompt = context + "\n\n### Instruction :\n" + prompt
+        self.last_response = raw_output
         return self._clean_code(raw_output)
 
     def generate_correction(
@@ -445,21 +463,28 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
             print(task)
             print("="*80 + "\n")
 
+            self.last_correction_system_prompt = "Assistant d'Auto-Correction SIG Python"
+            self.last_correction_user_prompt = task
             if self.provider_manager:
                 try:
                     raw = self.provider_manager.call_llm_api(self.llm_provider, task)
+                    self.last_correction_response = raw
                     return self._clean_code(raw)
                 except Exception as e:
                     print(f"[SIG Agent] Avertissement échec ProviderManager ({e}). Repli sur l'API directe.")
 
             if self.llm_provider == "groq":
-                return self._call_groq_api(task)
+                raw = self._call_groq_api(task)
+                self.last_correction_response = raw
+                return raw
             elif self.llm_provider == "openai":
                 return self._call_openai_api(task)
             elif self.llm_provider in ["ollama", "colab", "kaggle"]:
                 return self._call_ollama_api(task)
             else:
-                return self._clean_code(self._call_openrouter_api(task))
+                raw = self._call_openrouter_api(task)
+                self.last_correction_response = raw
+                return self._clean_code(raw)
 
         # Mode local correction
         model_prompt = (
@@ -483,6 +508,9 @@ Corrige le code et retourne UNIQUEMENT le code corrigé, complet et autonome, sa
         
         generated_ids = outputs[0][input_len:]
         raw_output = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        self.last_system_prompt = constraints + "\n\n### SQUELETTE DE CODE :\n" + skeleton
+        self.last_user_prompt = context + "\n\n### Instruction :\n" + prompt
+        self.last_response = raw_output
         return self._clean_code(raw_output)
 
     def _call_groq_api(self, prompt: str) -> str:

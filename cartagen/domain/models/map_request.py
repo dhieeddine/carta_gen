@@ -36,3 +36,4 @@ class GeneratedMap:
     created_at: datetime
     execution_details: ExecutionResult
     table_html: Optional[str] = None
+    agent_traces: Optional[Dict[str, Any]] = None

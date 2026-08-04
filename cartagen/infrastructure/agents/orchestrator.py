@@ -144,6 +144,25 @@ class CartaGenOrchestrator:
         print("="*80)
         print(f"[Orchestrator] Traitement terminé. Résultat global = {'SUCCÈS' if exec_res.success else 'ÉCHEC'}")
         print("="*80)
+        
+        agent_traces = {
+            "sql_agent": {
+                "system_prompt": getattr(self.sql_agent, "last_system_prompt", ""),
+                "user_prompt": getattr(self.sql_agent, "last_user_prompt", ""),
+                "response": getattr(self.sql_agent, "last_response", "")
+            },
+            "sig_agent": {
+                "system_prompt": getattr(self.sig_agent, "last_system_prompt", ""),
+                "user_prompt": getattr(self.sig_agent, "last_user_prompt", ""),
+                "response": getattr(self.sig_agent, "last_response", "")
+            },
+            "quality_agent": {
+                "system_prompt": getattr(self.sig_agent, "last_correction_system_prompt", ""),
+                "user_prompt": getattr(self.sig_agent, "last_correction_user_prompt", ""),
+                "response": getattr(self.sig_agent, "last_correction_response", "")
+            }
+        }
+        
         return GeneratedMap(
             request_id=request.request_id,
             prompt=request.prompt,
@@ -153,7 +172,8 @@ class CartaGenOrchestrator:
             image_url=exec_res.output_image_path,
             created_at=datetime.now(),
             execution_details=exec_res,
-            table_html=exec_res.output_table_html
+            table_html=exec_res.output_table_html,
+            agent_traces=agent_traces
         )
 
     def _customize_skeleton_replacements(self, code: str, prompt: str, target_col: str) -> str:

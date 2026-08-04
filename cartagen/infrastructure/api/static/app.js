@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const pythonCodeDisplay = document.getElementById("pythonCodeDisplay");
     const sqlQueryDisplay = document.getElementById("sqlQueryDisplay");
+    const workflowAgentsDisplay = document.getElementById("workflowAgentsDisplay");
 
     const copyCodeBtn = document.getElementById("copyCodeBtn");
     const copySqlBtn = document.getElementById("copySqlBtn");
@@ -152,6 +153,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Nettoyage console et onglets
         if (consoleLogs) consoleLogs.innerHTML = "";
+        if (workflowAgentsDisplay) {
+            workflowAgentsDisplay.innerHTML = `
+            <div class="placeholder-view" id="workflowPlaceholder" style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                <i class="fa-solid fa-sync fa-spin" style="font-size: 40px; margin-bottom: 15px; color: var(--primary-color);"></i>
+                <p style="margin: 0; font-size: 14px;">Analyse en cours... Les traces d'exécution des agents vont s'afficher d'un instant à l'autre.</p>
+            </div>`;
+        }
         addLog(`🔮 Requête soumise : "${prompt}" (Modèle/Provider: ${selectedProvider})`);
         setStatus("running", "Initialisation");
 
@@ -277,6 +285,73 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Requête SQL
         sqlQueryDisplay.textContent = data.sql || "-- Aucune requête SQL requise.";
+
+        // Traces des agents
+        if (data.agent_traces && workflowAgentsDisplay) {
+            const escapeHTML = (str) => {
+                if (!str) return "";
+                return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+            };
+            
+            let html = "";
+            const agents = [
+                { id: "sql_agent", name: "SQL Generator Agent (PostgreSQL)", icon: "fa-database", color: "#3498db" },
+                { id: "sig_agent", name: "SIG Generator Agent (Python & IDW)", icon: "fa-code", color: "#2ecc71" },
+                { id: "quality_agent", name: "Quality Agent (Auto-Correction)", icon: "fa-shield-halved", color: "#e74c3c" }
+            ];
+            
+            agents.forEach(agent => {
+                const trace = data.agent_traces[agent.id];
+                if (trace && (trace.system_prompt || trace.user_prompt || trace.response)) {
+                    html += `
+                    <div class="agent-trace-card" style="border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #111b27; overflow: hidden; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
+                        <div class="agent-trace-header" style="background: #182635; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color);">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <i class="fa-solid ${agent.icon}" style="color: ${agent.color}; font-size: 16px;"></i>
+                                <span style="font-weight: bold; color: var(--text-primary); font-size: 14px;">${agent.name}</span>
+                            </div>
+                            <span style="font-size: 11px; background: ${agent.color}22; color: ${agent.color}; padding: 2px 8px; border-radius: 20px; font-weight: bold; border: 1px solid ${agent.color}44;">Actif</span>
+                        </div>
+                        
+                        <div class="agent-trace-body" style="padding: 15px; display: flex; flex-direction: column; gap: 12px;">
+                            ${trace.system_prompt ? `
+                            <div>
+                                <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                    <i class="fa-solid fa-gears"></i> Prompt Système (Rôle et Règles)
+                                </div>
+                                <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 120px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.system_prompt)}</code></pre>
+                            </div>` : ''}
+                            
+                            ${trace.user_prompt ? `
+                            <div>
+                                <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                    <i class="fa-solid fa-user-gear"></i> Prompt Utilisateur (Contexte RAG & Consigne)
+                                </div>
+                                <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 150px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.user_prompt)}</code></pre>
+                            </div>` : ''}
+                            
+                            ${trace.response ? `
+                            <div>
+                                <div style="font-weight: bold; font-size: 11px; color: var(--text-primary); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                    <i class="fa-solid fa-reply-all" style="color: var(--primary-color);"></i> Réponse de l'Agent (Génération)
+                                </div>
+                                <pre style="background: #060a0f; padding: 12px; border-radius: var(--radius-sm); max-height: 250px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #3b82f622; color: #e2e8f0; white-space: pre-wrap;"><code style="font-family: monospace; color: #38bdf8;">${escapeHTML(trace.response)}</code></pre>
+                            </div>` : ''}
+                        </div>
+                    </div>`;
+                }
+            });
+            
+            if (html) {
+                workflowAgentsDisplay.innerHTML = html;
+            } else {
+                workflowAgentsDisplay.innerHTML = `
+                <div class="placeholder-view" style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                    <i class="fa-solid fa-circle-info" style="font-size: 40px; margin-bottom: 15px;"></i>
+                    <p style="margin: 0; font-size: 14px;">Aucune trace d'exécution disponible pour cette requête.</p>
+                </div>`;
+            }
+        }
 
         // Basculer automatiquement sur l'onglet de la carte ou du tableau
         if (data.table_html && !data.image_url) {

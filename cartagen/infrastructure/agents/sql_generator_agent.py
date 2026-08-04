@@ -24,6 +24,9 @@ class SQLGeneratorAgent:
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
         self.ollama_url = os.getenv("OLLAMA_COLAB_URL", "http://localhost:11434")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
+        self.last_system_prompt = ""
+        self.last_user_prompt = ""
+        self.last_response = "" 
 
     def generate_query(self, prompt: str, vector_context: Dict[str, Any] = None) -> Tuple[str, str]:
         """
@@ -34,7 +37,11 @@ class SQLGeneratorAgent:
             return self._generate_query_llm(prompt, vector_context)
         except Exception as e:
             print(f"[SQL Agent] Erreur lors de la génération LLM ({e}). Repli sur les règles regex historiques.")
-            return self._generate_query_fallback(prompt)
+            sql_query, target_col = self._generate_query_fallback(prompt)
+            self.last_system_prompt = "Regles Regex de Secours (Fallback)"
+            self.last_user_prompt = prompt
+            self.last_response = f"SQL: {sql_query}\nTarget Col: {target_col}"
+            return sql_query, target_col
 
     def _generate_query_llm(self, prompt: str, vector_context: Dict[str, Any]) -> Tuple[str, str]:
         # Formater le contexte RAG
@@ -97,8 +104,11 @@ class SQLGeneratorAgent:
             + "Génère la requête SQL complète (SELECT ... FROM ... WHERE ... GROUP BY ...) et la target_col."
         )
 
+        self.last_system_prompt = system_instruction
+        self.last_user_prompt = user_prompt
         # Appel du LLM
         response_text = self._call_llm(system_instruction, user_prompt)
+        self.last_response = response_text
         
         # Nettoyage de la réponse
         clean_text = self._clean_json_response(response_text)
