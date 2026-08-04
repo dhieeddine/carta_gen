@@ -36,7 +36,9 @@ images_temp*/
 *.out
 *.toc
 *.synctex.gz
-annuaire*
+annuaire_genere.*
+annuaire_*.tex
+annuaire_*.pdf
 rapport_*.md
 
 
