@@ -244,7 +244,7 @@ def get_stations(conn, gouv_filter=None):
         print(f"⚠️ {nb_bad} station(s) exclue(s) pour coordonnées Y incohérentes (ex: gouvernorat du Nord localisé au Sud).")
         df = df[~bad_coords_mask]
 
-    if gouv_filter and gouv_filter.lower() != 'all':
+    if gouv_filter and gouv_filter.lower() not in ('all', 'national'):
         aliases = {
             'jendouba': 'jandouba', 'jandouba': 'jandouba',
             'kasserine': 'kassrine', 'kassrine': 'kassrine',
@@ -311,7 +311,7 @@ def get_spatial_data(conn):
         return gdf_pays, gdf_gouv
 
 def get_gouv_shape(gdf_gouv, gouv_name):
-    if gouv_name.lower() == 'all': 
+    if gouv_name.lower() in ('all', 'national'): 
         return None
     possible_cols = ['LIB_FR', 'lib_fr', 'NOM', 'Nom', 'nom', 'NOM_FR', 'nom_fr']
     col_name = next((c for c in possible_cols if c in gdf_gouv.columns), None)
@@ -1135,7 +1135,7 @@ def generate_regional_comparison_chart(df_hist_8, df_curr_yasra, avail_years, an
         print("⚠️ Pas de données disponibles pour la comparaison des 8 dernières années.")
         return
 
-    is_nat = (gouv.lower() == 'all')
+    is_nat = (gouv.lower() in ('all', 'national'))
     df_hist_8 = df_hist_8.copy()
     df_hist_8['norm_gouv'] = df_hist_8['gouvernorat'].apply(normalize_string)
     df_curr_yasra = df_curr_yasra.copy()
@@ -1229,7 +1229,7 @@ def generate_regional_comparison_chart(df_hist_8, df_curr_yasra, avail_years, an
 
 def generate_section_13_mensuel(conn, annee, gouv='all'):
     """Génère la section 1.3. Pluies mensuelles (texte introductif dynamique, Tableau 3 et Figure 2)."""
-    is_nat = (gouv.lower() == 'all')
+    is_nat = (gouv.lower() in ('all', 'national'))
     clean_g = escape_latex(gouv.strip().capitalize()) if not is_nat else "National"
 
     REGIONS_DEF = {
@@ -1502,7 +1502,7 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
 
 def generate_section_14_saisonnier(conn, annee, gouv='all'):
     """Génère la section 1.4. Pluies saisonnières avec texte dynamique et tableaux."""
-    is_nat = (gouv.lower() == 'all')
+    is_nat = (gouv.lower() in ('all', 'national'))
     clean_g = escape_latex(gouv.strip().capitalize()) if not is_nat else "National"
 
     REGIONS_DEF = {
@@ -1858,7 +1858,7 @@ def generate_section_14_table7_cumule(conn, annee, gouv='all'):
     cum_pivot = pivot.cumsum(axis=1)
 
     df_st = pd.read_sql("SELECT id_station, gouvernorat, nom FROM station_148 ORDER BY gouvernorat, nom;", conn)
-    if gouv.lower() != 'all':
+    if gouv.lower() not in ('all', 'national'):
         df_st['norm_gouv'] = df_st['gouvernorat'].apply(normalize_string)
         df_st = df_st[df_st['norm_gouv'] == normalize_string(gouv)]
 
@@ -1902,7 +1902,7 @@ def generate_section_14_table7_cumule(conn, annee, gouv='all'):
 
 # ------------------------- 5. Rédaction du rapport LaTeX complet -------------------------
 def write_complete_latex(stats, daily_latex, gouv, annee, output_tex, conn, df_stations, df_rain):
-    is_national = (gouv.lower() == 'all')
+    is_national = (gouv.lower() in ('all', 'national'))
     clean_gouv = gouv.strip().capitalize() if not is_national else "National"
     gouv_display = f"Gouvernorat de {clean_gouv}" if not is_national else "Toute la Tunisie"
 
@@ -2811,7 +2811,7 @@ def main():
     args = parser.parse_args()
 
     if args.output is None:
-        clean_gouv = normalize_string(args.gouv).capitalize() if args.gouv.lower() != 'all' else 'National'
+        clean_gouv = normalize_string(args.gouv).capitalize() if args.gouv.lower() not in ('all', 'national') else 'National'
         args.output = f"Annuaire_{clean_gouv}_{args.year}_{args.year+1}.pdf"
 
     global IMG_DIR
@@ -2843,7 +2843,7 @@ def main():
         
         # Spatial
         gdf_pays, gdf_gouv = get_spatial_data(conn)
-        gdf_gouv_mask = get_gouv_shape(gdf_gouv, args.gouv) if args.gouv.lower() != 'all' else None
+        gdf_gouv_mask = get_gouv_shape(gdf_gouv, args.gouv) if args.gouv.lower() not in ('all', 'national') else None
 
         # Rendu des figures
         print("🎨 Rendu des graphiques et cartes...")

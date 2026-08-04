@@ -462,11 +462,6 @@ class AnnuaireRAGAgent:
         )
 
         KEYWORD_FORCED = {
-            "carte_annuelle.png": [
-                "carte", "map", "isohyete", "isohyète", "isohyètes", "isohyetes", "isohyet",
-                "repartition spatiale", "répartition spatiale", "spatiale de la pluie",
-                "carte pluviometrique", "carte pluviométrique"
-            ],
             "carte_stations.png": [
                 "carte des stations", "reseau de stations", "réseau de stations",
                 "localisation des stations", "postes pluviometriques", "réseau pluviométrique"
@@ -493,6 +488,11 @@ class AnnuaireRAGAgent:
             "carte_interannuelle.png": [
                 "interannuelle", "inter-annuelle", "moyenne pluriannuelle",
                 "normale climatique", "long terme"
+            ],
+            "carte_annuelle.png": [
+                "carte", "map", "isohyete", "isohyète", "isohyètes", "isohyetes", "isohyet",
+                "repartition spatiale", "répartition spatiale", "spatiale de la pluie",
+                "carte pluviometrique", "carte pluviométrique"
             ],
         }
 
