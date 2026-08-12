@@ -21,6 +21,42 @@ class ProviderManager:
         load_dotenv(os.path.join(self.workspace_root, ".env"), override=True)
         # 1. Configs par défaut issues du .env
         default_providers = {
+            "colab": {
+                "id": "colab",
+                "name": "Google Colab Fine-Tuned Model (/content/drive/My Drive/CartaGen_LoRA_SQL_SIG)",
+                "exec_type": "colab",
+                "model": "CartaGen_LoRA_SQL_SIG",
+                "endpoint_url": os.getenv("OLLAMA_COLAB_URL", "https://deonna-veracious-belen.ngrok-free.dev"),
+                "api_key": "",
+                "description": "Serveur API vLLM / FastApi sur Google Colab exécutant le modèle fine-tuné /content/drive/My Drive/CartaGen_LoRA_SQL_SIG"
+            },
+            "groq": {
+                "id": "groq",
+                "name": "Groq Cloud API (Llama 3.3 70B Versatile)",
+                "exec_type": "groq",
+                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                "endpoint_url": "https://api.groq.com/openai/v1/chat/completions",
+                "api_key": os.getenv("GROQ_API_KEY", ""),
+                "description": "API Cloud Groq Ultra-rapide (Llama 3.3 70B)"
+            },
+            "openrouter": {
+                "id": "openrouter",
+                "name": "OpenRouter API (Llama 3.1 8B Instruct Free)",
+                "exec_type": "openrouter",
+                "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
+                "endpoint_url": "https://openrouter.ai/api/v1/chat/completions",
+                "api_key": os.getenv("OPENROUTER_API_KEY", ""),
+                "description": "API Cloud OpenRouter (Llama 3.1 8B Instruct)"
+            },
+            "openai": {
+                "id": "openai",
+                "name": "OpenAI API (GPT-4o Mini)",
+                "exec_type": "openai",
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "endpoint_url": "https://api.openai.com/v1/chat/completions",
+                "api_key": os.getenv("OPENAI_API_KEY", ""),
+                "description": "API Cloud OpenAI Official (GPT-4o-mini)"
+            },
             "kaggle": {
                 "id": "kaggle",
                 "name": "Kaggle GPU (VisCoder2-7B Ngrok)",
@@ -30,47 +66,11 @@ class ProviderManager:
                 "api_key": "",
                 "description": "Tunnel d'exécution Kaggle GPU (VisCoder2-7B / Ngrok)"
             },
-            "openrouter": {
-                "id": "openrouter",
-                "name": "OpenRouter API (Cloud)",
-                "exec_type": "api_key",
-                "model": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
-                "api_key": os.getenv("OPENROUTER_API_KEY", ""),
-                "endpoint_url": "https://openrouter.ai/api/v1/chat/completions",
-                "description": "API OpenRouter avec modèles haute performance (Llama 3.3 70B, etc.)"
-            },
-            "groq": {
-                "id": "groq",
-                "name": "Groq Cloud API",
-                "exec_type": "api_key",
-                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                "api_key": os.getenv("GROQ_API_KEY", ""),
-                "endpoint_url": "https://api.groq.com/openai/v1/chat/completions",
-                "description": "Inférence ultra-rapide sur LPU Groq"
-            },
-            "openai": {
-                "id": "openai",
-                "name": "OpenAI API (GPT-4o)",
-                "exec_type": "api_key",
-                "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
-                "api_key": os.getenv("OPENAI_API_KEY", ""),
-                "endpoint_url": "https://api.openai.com/v1/chat/completions",
-                "description": "Modèle GPT-4o d'OpenAI"
-            },
-            "colab": {
-                "id": "colab",
-                "name": "Google Colab Tunnel (Ngrok/Tunnel)",
-                "exec_type": "colab",
-                "model": "llama3",
-                "endpoint_url": os.getenv("OLLAMA_COLAB_URL", "http://localhost:11434"),
-                "api_key": "",
-                "description": "Tunnel d'exécution sur Google Colab GPU"
-            },
             "ollama": {
                 "id": "ollama",
                 "name": "Ollama (Serveur Local)",
                 "exec_type": "ollama",
-                "model": os.getenv("OLLAMA_MODEL", "llama3"),
+                "model": os.getenv("OLLAMA_MODEL", "CartaGen_LoRA_SQL_SIG"),
                 "endpoint_url": "http://localhost:11434",
                 "api_key": "",
                 "description": "Serveur local Ollama (localhost:11434)"
@@ -111,8 +111,8 @@ class ProviderManager:
         load_dotenv(os.path.join(self.workspace_root, ".env"), override=True)
         self._load_providers()
         result = []
-        # Lire le provider par défaut DEPUIS .env (pas de valeur codée en dur)
-        default_provider_id = os.getenv("LLM_PROVIDER", "openrouter").lower()
+        # Lire le provider par défaut DEPUIS .env (défaut sur colab)
+        default_provider_id = os.getenv("LLM_PROVIDER", "colab").lower()
 
         for pid, pinfo in self.providers.items():
             result.append({
@@ -204,16 +204,18 @@ class ProviderManager:
 
         # Format 1 : API OpenAI-Compatible (OpenRouter, Groq, OpenAI, v1/chat/completions)
         if "chat/completions" in endpoint_url or exec_type in ["api_key", "openrouter", "groq", "openai"]:
-            if not endpoint_url:
-                if pid == "groq":
-                    endpoint_url = "https://api.groq.com/openai/v1/chat/completions"
-                    api_key = api_key or os.getenv("GROQ_API_KEY", "")
-                elif pid == "openai":
-                    endpoint_url = "https://api.openai.com/v1/chat/completions"
-                    api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-                else:
-                    endpoint_url = "https://openrouter.ai/api/v1/chat/completions"
-                    api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+            if pid == "groq" or exec_type == "groq":
+                endpoint_url = "https://api.groq.com/openai/v1/chat/completions"
+                api_key = api_key or os.getenv("GROQ_API_KEY", "")
+                model_name = model_name if model_name and "llama" in model_name.lower() else os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            elif pid == "openai" or exec_type == "openai":
+                endpoint_url = "https://api.openai.com/v1/chat/completions"
+                api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+                model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            elif pid == "openrouter" or exec_type == "openrouter":
+                endpoint_url = "https://openrouter.ai/api/v1/chat/completions"
+                api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+                model_name = model_name or os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
 
             if api_key and "Authorization" not in headers:
                 headers["Authorization"] = f"Bearer {api_key}"

@@ -37,15 +37,17 @@
 
             <!-- CHAT ANNUAIRE INTERFACE PERMANENTE -->
             <div class="chat-sidebar-wrapper" style="display:flex; flex-direction:column; flex:1; min-height:0; gap:12px;">
-                <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                     <h3 style="font-size:1rem; margin:0; font-weight:600; display:flex; align-items:center; gap:8px;">
                         <i class="fa-solid fa-comments" style="color:var(--accent-color);"></i> Chat Annuaire
                     </h3>
-                    <button id="indexAnnuaireBtn" class="primary-btn" style="background:var(--accent-secondary, #16a085); padding:6px 12px; font-size:0.8rem; border-radius:6px;">
-                        <i class="fa-solid fa-database btn-icon"></i>
-                        <span class="btn-text">Indexer</span>
-                        <div class="spinner hidden" id="indexSpinner"></div>
-                    </button>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button id="toggleRagBtn" type="button" data-enabled="false" style="background:#e74c3c; color:#fff; padding:6px 14px; font-size:0.78rem; border-radius:6px; font-weight:600; border:none; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.3s ease;">
+                            <i class="fa-solid fa-brain" style="pointer-events:none;"></i>
+                            <span id="ragToggleText" style="pointer-events:none;">RAG : DÉSACTIVÉ</span>
+                            <div class="spinner hidden" id="indexSpinner" style="width:12px; height:12px; border-width:2px;"></div>
+                        </button>
+                    </div>
                 </div>
                 <p id="indexStatusMsg" class="section-desc" style="margin:0; font-size:0.78rem;"></p>
 
@@ -69,8 +71,8 @@
                         style="flex:1; height:80px; resize:none;
                         background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
                         border-radius:8px; padding:10px; color:#fff; font-family:inherit; font-size:0.9rem;"></textarea>
-                    <button id="sendChatBtn" class="primary-btn" style="width:48px; height:80px; flex-shrink:0; padding:0; display:flex; justify-content:center; align-items:center; border-radius:8px;" title="Envoyer">
-                        <i class="fa-solid fa-paper-plane" style="margin:0; font-size:1.1rem;"></i>
+                    <button id="sendChatBtn" type="button" class="primary-btn" style="width:48px; height:80px; flex-shrink:0; padding:0; display:flex; justify-content:center; align-items:center; border-radius:8px;" title="Envoyer">
+                        <i class="fa-solid fa-paper-plane" style="margin:0; font-size:1.1rem; pointer-events:none;"></i>
                         <div class="spinner hidden" id="chatSpinner"></div>
                     </button>
                 </div>
@@ -94,9 +96,6 @@
                     <button class="tab-btn" data-tab="code-python">
                         <i class="fa-solid fa-code"></i> Code Python
                     </button>
-                    <button class="tab-btn" data-tab="requete-sql">
-                        <i class="fa-solid fa-database"></i> Requête SQL
-                    </button>
                     <button class="tab-btn" data-tab="agents-workflow">
                         <i class="fa-solid fa-robot"></i> Traces Agents
                     </button>
@@ -111,7 +110,7 @@
                     </button>
                 </nav>
                 
-                <div class="header-actions">
+                <div class="header-actions" style="display:flex; align-items:center; gap:12px;">
                     <a id="downloadBtn" class="icon-btn hidden" title="Télécharger la carte" download="carte_isohyete.png">
                         <i class="fa-solid fa-download"></i>
                     </a>
@@ -166,18 +165,7 @@
                     </div>
                 </div>
 
-                <!-- Onglet 3 : Visualisation Requête SQL -->
-                <div class="tab-content" id="requete-sql">
-                    <div class="code-viewer-container">
-                        <div class="viewer-actions">
-                            <span>Requête SQL d'Extraction (SQL Agent)</span>
-                            <button class="copy-btn" id="copySqlBtn">
-                                <i class="fa-regular fa-clipboard"></i> Copier
-                            </button>
-                        </div>
-                        <pre><code id="sqlQueryDisplay">-- En attente de génération...</code></pre>
-                    </div>
-                </div>
+
 
                 <!-- Onglet Traces Agents -->
                 <div class="tab-content" id="agents-workflow">
@@ -320,6 +308,30 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- SECTION SHAPEFILES -->
+                        <div style="margin-top: 40px; border-top: 1px solid var(--border-color); padding-top: 25px;">
+                            <h3><i class="fa-solid fa-map"></i> Bases Spatiales (Shapefiles)</h3>
+                            <p class="section-desc">Vérifiez et importez les fonds de cartes géographiques nécessaires pour les cartes de la Tunisie (Gouvernorats, Pays, Délégations, Régions Hydrographiques).</p>
+                            
+                            <button id="ingestShapefilesBtn" class="primary-btn" style="background: var(--accent-secondary); margin-top: 10px;">
+                                <span class="btn-text">Importer les Shapefiles Spatiaux</span>
+                                <i class="fa-solid fa-layer-group btn-icon"></i>
+                                <div class="spinner hidden" id="shapefilesSpinner"></div>
+                            </button>
+
+                            <div class="yearbook-result-box hidden" id="shapefilesResultBox" style="margin-top: 15px;">
+                                <div class="result-card" style="border-left: 4px solid #3498db; flex-direction: column; align-items: flex-start; gap: 12px;">
+                                    <div style="display: flex; align-items: center;">
+                                        <i class="fa-solid fa-info-circle" style="font-size: 2rem; color: #3498db; margin-right: 15px;"></i>
+                                        <div class="result-details">
+                                            <h4>Rapport des Bases Spatiales</h4>
+                                            <p id="shapefilesResultMsg" style="font-size: 0.9rem; line-height: 1.5;"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -373,9 +385,9 @@
     <!-- Script de logique -->
     <script>
         if (window.location.protocol === 'file:') {
-            document.write('<script src="./app.js?v=1.0.2"><\/script>');
+            document.write('<script src="./app.js?v=1.2.1"><\/script>');
         } else {
-            document.write('<script src="/static/app.js?v=1.0.2"><\/script>');
+            document.write('<script src="/static/app.js?v=1.2.1"><\/script>');
         }
     </script>
 </body>

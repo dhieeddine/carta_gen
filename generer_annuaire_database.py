@@ -131,7 +131,7 @@ def get_thiessen_weights(conn, df_stations):
         gdf_pays = gpd.read_postgis("SELECT geom FROM limite_pays_polygon", conn, geom_col='geom', crs="EPSG:4326").to_crs("EPSG:32632")
         gdf_gouv = gpd.read_postgis("SELECT lib_fr, geom FROM gouvernorats", conn, geom_col='geom', crs="EPSG:4326").to_crs("EPSG:32632")
     except Exception:
-        BASE_DIR = r"D:\Desktop\stage_dgre\backend\data\raw"
+        BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "data", "raw"))
         SHP_PAYS = os.path.join(BASE_DIR, "limit_pays_polygon_tunisie", "limite_pays_polygon.shp")
         SHP_GOUV = os.path.join(BASE_DIR, "deleg_gouv_regions", "Gouvernorats.shp")
         gdf_pays = gpd.read_file(SHP_PAYS).to_crs("EPSG:32632")
@@ -303,7 +303,7 @@ def get_spatial_data(conn):
         return gdf_pays, gdf_gouv
     except Exception as e:
         print(f"⚠️ Échec du chargement PostGIS ({e}), chargement via shapefiles locaux...")
-        BASE_DIR = r"D:\Desktop\stage_dgre\backend\data\raw"
+        BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "data", "raw"))
         SHP_PAYS = os.path.join(BASE_DIR, "limit_pays_polygon_tunisie", "limite_pays_polygon.shp")
         SHP_GOUV = os.path.join(BASE_DIR, "deleg_gouv_regions", "Gouvernorats.shp")
         gdf_pays = gpd.read_file(SHP_PAYS).to_crs("EPSG:32632")
@@ -321,12 +321,12 @@ def get_gouv_shape(gdf_gouv, gouv_name):
     return gdf_gouv[gdf_gouv['_normalized'] == normalize_string(gouv_name)].copy()
 
 def get_yasra_metrics(conn):
-    """Récupère directement les colonnes moy_, pct et les normales mensuelles enregistrées dans yasra_data."""
+    """Récupère la moyenne interannuelle enregistrée dans la table moy_interannuelle."""
     try:
-        df = pd.read_sql("SELECT code::text AS id_station, sept AS moy_sept, octo AS moy_octo, nove AS moy_nove, dece AS moy_dece, janv AS moy_janv, fev AS moy_fev, mar AS moy_mar, avr AS moy_avr, mai AS moy_mai, juin AS moy_juin, juil AS moy_juil, aout AS moy_aout, moy_, pct FROM yasra_data;", conn)
+        df = pd.read_sql("SELECT id_station, moy AS moy_ FROM moy_interannuelle;", conn)
         return df.set_index('id_station')
     except Exception as e:
-        print(f"⚠️ Erreur chargement yasra_data (moy_/pct) : {e}")
+        print(f"⚠️ Erreur chargement moy_interannuelle : {e}")
         return pd.DataFrame()
 
 # ------------------------- 2. Traitement statistique -------------------------
@@ -434,7 +434,7 @@ def idw_interpolation(df, grid_lon, grid_lat, value_col, power=2, k=10):
     interpolated = np.sum(weights * stations[indices, 2], axis=1)
     return interpolated.reshape(grid_lon.shape)
 
-def generate_isohyet_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, value_col, titre, fname, levels, colors):
+def generate_isohyet_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, value_col, titre, fname, levels, colors, unit='mm'):
     os.makedirs(IMG_DIR, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7, 9))
     bounds = gdf_gouv_mask.total_bounds if gdf_gouv_mask is not None else gdf_pays.total_bounds
@@ -472,7 +472,8 @@ def generate_isohyet_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, value_col, titre
     contour_levels = [l for l in levels if l > 0]
     if contour_levels:
         cs = ax.contour(lon_mesh, lat_mesh, z_mesh, levels=contour_levels, colors='#2c3e50', linewidths=0.6, zorder=2)
-        ax.clabel(cs, inline=True, fontsize=7, fmt='%d mm')
+        fmt_str = f'%d {unit.replace("%", "%%")}'
+        ax.clabel(cs, inline=True, fontsize=7, fmt=fmt_str)
     
     # Pas de points station sur les isohyètes (carte dédiée séparée)
     ax.set_xlim(lon_min - margin, lon_max + margin)
@@ -507,8 +508,9 @@ def generate_isohyet_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, value_col, titre
     ax.text(cx + csize * 0.8, cy + csize * 0.3, 'E', transform=ax.transAxes, ha='left', va='center', fontsize=7, fontweight='bold')
     ax.text(cx - csize * 0.8, cy + csize * 0.3, 'O', transform=ax.transAxes, ha='right', va='center', fontsize=7, fontweight='bold')
     
-    legend_elements = [Patch(facecolor=colors[i], label=f"{levels[i]} - {levels[i+1]} mm" if i < len(levels)-2 else f"> {levels[i]} mm") for i in range(len(levels)-1)]
-    ax.legend(handles=legend_elements, title='Pluviométrie (mm)', loc='lower left', fontsize=8, title_fontsize=9,
+    legend_elements = [Patch(facecolor=colors[i], label=f"{levels[i]} - {levels[i+1]} {unit}" if i < len(levels)-2 else f"> {levels[i]} {unit}") for i in range(len(levels)-1)]
+    title_leg = f'Pluviométrie ({unit})' if unit == 'mm' else f'Rapport ({unit})'
+    ax.legend(handles=legend_elements, title=title_leg, loc='lower left', fontsize=8, title_fontsize=9,
               framealpha=1.0, edgecolor='black')
     
     plt.tight_layout()
@@ -871,8 +873,33 @@ def generate_report_figures(stats, gdf_pays, gdf_gouv, gdf_gouv_mask, gouv, anne
     generate_monthly_subplots_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, group2, 'carte_mensuelle_group2.png')
     generate_monthly_subplots_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, group3, 'carte_mensuelle_group3.png')
         
-    # 1c. Carte saisonnière (une seule figure avec 4 subplots)
+    # 1c. Carte saisonnière (une seule figure avec 4 subplots pour le PDF)
     generate_seasonal_subplots_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, 'carte_saisons_subplots.png')
+
+    # 1d. Nouvelles cartes individuelles séparées pour le Chatbot (Chaque saison individuellement sans subplots)
+    for s_key, s_cfg in SEASONAL_CONFIG.items():
+        fname_season = f"carte_saison_{s_key}.png"
+        generate_isohyet_map(
+            df, gdf_pays, gdf_gouv, gdf_gouv_mask, s_key,
+            f"Isohyètes — {s_cfg['title']} {annee}", fname_season,
+            s_cfg['levels'], s_cfg['colors']
+        )
+
+    # 1e. Nouvelles cartes individuelles séparées pour le Chatbot (Chaque mois individuellement sans subplots)
+    MOIS_NOM_MAP = {
+        'sept': 'Septembre', 'octo': 'Octobre', 'nove': 'Novembre', 'dece': 'Décembre',
+        'janv': 'Janvier', 'fev': 'Février', 'mar': 'Mars', 'avr': 'Avril',
+        'mai': 'Mai', 'juin': 'Juin', 'juil': 'Juillet', 'aout': 'Août'
+    }
+    for m_key, m_cfg in MONTHLY_CONFIG.items():
+        if m_key in df.columns:
+            m_nom = MOIS_NOM_MAP.get(m_key, m_key.capitalize())
+            fname_month = f"carte_mois_{m_key}.png"
+            generate_isohyet_map(
+                df, gdf_pays, gdf_gouv, gdf_gouv_mask, m_key,
+                f"Isohyètes — {m_nom} {annee}", fname_month,
+                m_cfg['levels'], m_cfg['colors']
+            )
     
     # 2. Histogramme Mensuel
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -906,37 +933,34 @@ def generate_report_figures(stats, gdf_pays, gdf_gouv, gdf_gouv_mask, gouv, anne
     # 5. Carte des stations (nouvelle carte dédiée)
     generate_stations_map(df, gdf_pays, gdf_gouv, gdf_gouv_mask, annee, 'carte_stations.png')
 
-    # 6. Cartes interannuelles + Rapport à la Normale
-    print("📊 Calcul des statistiques interannuelles (période glissante de 20 ans)...")
-    df_inter = get_interannual_stats(conn, station_ids, target_annee=annee)
-    if not df_inter.empty:
-        df_coords = df[['lon', 'lat']].reset_index()
-        df_coords.columns = ['id_station', 'lon', 'lat']
-        df_inter_map = df_inter.merge(df_coords, on='id_station', how='inner')
-        annee_min_hist = int(df_inter_map['annee_min'].min())
-        annee_max_hist = int(df_inter_map['annee_max'].max())
-        generate_isohyet_map(
-            df_inter_map, gdf_pays, gdf_gouv, gdf_gouv_mask,
-            'mean_annual',
-            f'Isohyètes Interannuelles ({annee_min_hist}–{annee_max_hist})',
-            'carte_interannuelle.png',
-            LEVELS_INTERANNUAL, COLORS_INTERANNUAL
-        )
-        # Rapport à la Normale
-        df_curr = df[['lon', 'lat', 'total']].reset_index()
-        df_curr.columns = ['id_station', 'lon', 'lat', 'total']
-        df_rapport = df_inter.merge(df_curr, on='id_station', how='inner')
-        df_rapport['ratio_pct'] = (df_rapport['total'] / df_rapport['mean_annual'].replace(0, np.nan)) * 100
-        df_rapport['ratio_pct'] = df_rapport['ratio_pct'].clip(lower=0).fillna(0)
-        generate_isohyet_map(
-            df_rapport, gdf_pays, gdf_gouv, gdf_gouv_mask,
-            'ratio_pct',
-            f'Rapport à la Normale — {annee}–{annee+1} (%)',
-            'carte_rapport_normale.png',
-            LEVELS_RAPPORT, COLORS_RAPPORT
-        )
-    else:
-        print("⚠️ Données historiques insuffisantes pour les cartes interannuelles.")
+    # 6. Cartes interannuelles + Rapport à la Normale (sur les 50 ans historiques moy_interannuelle 1959-2009)
+    print("📊 Génération des cartes interannuelles (moy_interannuelle 50 ans 1959-2009)...")
+    try:
+        df_y_map = pd.read_sql("SELECT id_station, moy AS mean_annual FROM moy_interannuelle;", conn)
+        df_coords = df[['lon', 'lat', 'total']].reset_index()
+        df_inter_map = df_y_map.merge(df_coords, on='id_station', how='inner')
+        if not df_inter_map.empty:
+            generate_isohyet_map(
+                df_inter_map, gdf_pays, gdf_gouv, gdf_gouv_mask,
+                'mean_annual',
+                'Isohyètes moyennes interannuelles (50 ans) du 1959-2009',
+                'carte_interannuelle.png',
+                LEVELS_INTERANNUAL, COLORS_INTERANNUAL
+            )
+            # Rapport à la Normale
+            df_rapport = df_inter_map.copy()
+            df_rapport['ratio_pct'] = (df_rapport['total'] / df_rapport['mean_annual'].replace(0, np.nan)) * 100
+            df_rapport['ratio_pct'] = df_rapport['ratio_pct'].clip(lower=0).fillna(0)
+            generate_isohyet_map(
+                df_rapport, gdf_pays, gdf_gouv, gdf_gouv_mask,
+                'ratio_pct',
+                f'Rapport à la Normale — {annee}–{annee+1} (%)',
+                'carte_rapport_normale.png',
+                LEVELS_RAPPORT, COLORS_RAPPORT,
+                unit='%'
+            )
+    except Exception as e:
+        print(f"⚠️ Erreur lors de la génération de la carte interannuelle : {e}")
 
     # 7. Tunisie du Nord, Centrale et du Sud bar charts
     REGIONS_ZONES = {
@@ -945,7 +969,7 @@ def generate_report_figures(stats, gdf_pays, gdf_gouv, gdf_gouv_mask, gouv, anne
         'Tunisie du Sud': ['gafsa', 'tozeur', 'kebili', 'kebeli', 'gabes', 'tatouine', 'tataouine', 'mednine', 'medenine']
     }
     
-    q_y_zone = "SELECT code::text AS id_station, station AS nom_station, moy_ AS total_moy FROM yasra_data;"
+    q_y_zone = "SELECT id_station, moy AS total_moy FROM moy_interannuelle;"
     df_y_zone = pd.read_sql(q_y_zone, conn)
     
     df_st_zone = pd.read_sql("SELECT id_station, gouvernorat, nom FROM station_148;", conn)
@@ -1064,7 +1088,7 @@ def generer_tableaux_journaliers_latex(conn, station_ids, annee, station_names):
         code = f"\\textbf{{{station_counter}. {st_nom} ({sid})}} \\\\[2pt]\n"
         
         # Tableau à 13 colonnes (1 jour + 12 mois)
-        code += "\\begin{tabular}{|c|" + "c|"*12 + "}\n\\hline\n"
+        code += "\\resizebox{0.98\\linewidth}{!}{\n\\begin{tabular}{|c|" + "c|"*12 + "}\n\\hline\n"
         code += "\\hdr{Jour} & " + " & ".join([f"\\hdr{{{m}}}" for m in mois_labels]) + " \\\\ \\hline\n"
         
         # Lignes journalières (1 à 31)
@@ -1086,45 +1110,40 @@ def generer_tableaux_journaliers_latex(conn, station_ids, annee, station_names):
         
         # Ligne Tot. Annuel + Maxi
         maxi_date = f"{max_jour:02d}/{max_mois_num:02d}"
-        code += f"\\multicolumn{{13}}{{|l|}}{{\\textbf{{Tot. Annuel :}} {fmt_val(total_annuel)} mm \\quad | \\quad \\textbf{{Maxi :}} {fmt_val(max_val)} mm le {maxi_date}}} \\\\ \\hline\n"
+        code += f"\\multicolumn{{13}}{{|l|}}{{\\scriptsize \\textbf{{Tot:}} {fmt_val(total_annuel)} mm | \\textbf{{Max:}} {fmt_val(max_val)} mm ({maxi_date})}} \\\\ \\hline\n"
         
         # Ligne Pluies
-        code += f"\\multicolumn{{13}}{{|l|}}{{\\textbf{{Pluies :}} {nb_gt0} ($>0$\\,mm) \\ / \\ {nb_ge05} ($\\ge0,5$\\,mm) \\ / \\ {nb_ge10} ($\\ge10$\\,mm)}} \\\\ \\hline\n"
+        code += f"\\multicolumn{{13}}{{|l|}}{{\\scriptsize \\textbf{{Pluies:}} {nb_gt0}($>0$) | {nb_ge05}($\\ge0,5$) | {nb_ge10}($\\ge10$)}} \\\\ \\hline\n"
         
-        code += "\\end{tabular}\n"
+        code += "\\end{tabular}\n}\n"
         
         all_tables.append(code)
 
     if not all_tables:
         return ""
 
-    # Organisation en grille 3x2 par page (6 tableaux par page)
+    # Organisation en grille 2x2 par page (4 tableaux par page)
     latex_final = ""
-    for chunk_idx in range(0, len(all_tables), 6):
-        chunk = all_tables[chunk_idx:chunk_idx+6]
+    for chunk_idx in range(0, len(all_tables), 4):
+        chunk = all_tables[chunk_idx:chunk_idx+4]
+        
+        latex_final += "\\begin{table}[H]\n\\centering\n"
         
         # Ligne 1 : Table 1 & Table 2
         latex_final += "\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[0] + "\\end{minipage}\n"
         if len(chunk) > 1:
             latex_final += "\\hfill\n\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[1] + "\\end{minipage}\n"
-        latex_final += "\\vspace{0.3cm}\n\n"
         
-        # Ligne 2 : Table 3 & Table 4
         if len(chunk) > 2:
+            latex_final += "\\vspace{1.5cm}\n\n"
+            # Ligne 2 : Table 3 & Table 4
             latex_final += "\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[2] + "\\end{minipage}\n"
             if len(chunk) > 3:
                 latex_final += "\\hfill\n\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[3] + "\\end{minipage}\n"
-            latex_final += "\\vspace{0.3cm}\n\n"
+                
+        latex_final += "\n\\end{table}\n"
             
-        # Ligne 3 : Table 5 & Table 6
-        if len(chunk) > 4:
-            latex_final += "\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[4] + "\\end{minipage}\n"
-            if len(chunk) > 5:
-                latex_final += "\\hfill\n\\begin{minipage}[t]{0.49\\textwidth}\n\\centering\n" + chunk[5] + "\\end{minipage}\n"
-            latex_final += "\\vspace{0.3cm}\n\n"
-            
-        # N'ajoute \clearpage que si ce n'est pas le tout dernier paquet
-        if chunk_idx + 6 < len(all_tables):
+        if chunk_idx + 4 < len(all_tables):
             latex_final += "\\clearpage\n"
             
     return latex_final
@@ -1272,8 +1291,30 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
     df_m['m_key'] = df_m['m'].map(month_num_to_key)
     pivot_pluie = df_m.pivot(index='id_station', columns='m_key', values='sum_m').fillna(0)
 
-    q_y = "SELECT code::text AS id_station, sept, octo, nove, dece, janv, fev, mar, avr, mai, juin, juil, aout FROM yasra_data;"
-    df_y = pd.read_sql(q_y, conn).set_index('id_station')
+    # Calcul des normales mensuelles historiques (sur 20 ans glissants) par station
+    start_year = max(1950, annee - 20)
+    q_norm = f"""
+        WITH monthly_hist AS (
+            SELECT id_station,
+                   EXTRACT(MONTH FROM date_obs)::int AS m,
+                   SUM(valeur_mm) AS sum_m
+            FROM pluies_148
+            WHERE valeur_mm IS NOT NULL
+              AND EXTRACT(YEAR FROM date_obs) >= {start_year}
+              AND EXTRACT(YEAR FROM date_obs) <= {annee}
+            GROUP BY id_station, EXTRACT(YEAR FROM date_obs), EXTRACT(MONTH FROM date_obs)
+        )
+        SELECT id_station, m, AVG(sum_m) AS norm_m
+        FROM monthly_hist
+        GROUP BY id_station, m;
+    """
+    try:
+        df_y_hist = pd.read_sql(q_norm, conn)
+        df_y_hist['m_key'] = df_y_hist['m'].map(month_num_to_key)
+        df_y = df_y_hist.pivot(index='id_station', columns='m_key', values='norm_m').fillna(0)
+    except Exception as e:
+        print(f"⚠️ Erreur calcul normales mensuelles : {e}")
+        df_y = pd.DataFrame()
 
     df_st = pd.read_sql("SELECT id_station, gouvernorat, nom, lon, lat FROM station_148;", conn)
     df_st['norm_gouv'] = df_st['gouvernorat'].apply(normalize_string)
@@ -1294,7 +1335,7 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
 
         for m in mois_keys:
             st_p = df_st.merge(pivot_pluie[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'pluie'}) if m in pivot_pluie.columns else df_st.assign(pluie=0)
-            st_n = df_st.merge(df_y[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'norm'}) if m in df_y.columns else df_st.assign(norm=0)
+            st_n = df_st.merge(df_y[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'norm'}) if (not df_y.empty and m in df_y.columns) else df_st.assign(norm=0)
             st_pn = st_p.merge(st_n[['id_station', 'norm']], on='id_station')
             
             for reg_name in REGIONS_DEF.keys():
@@ -1321,7 +1362,7 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
         results = {s[:15]: {} for s in st_names}
         for m in mois_keys:
             st_p = df_st.merge(pivot_pluie[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'pluie'}) if m in pivot_pluie.columns else df_st.assign(pluie=0)
-            st_n = df_st.merge(df_y[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'norm'}) if m in df_y.columns else df_st.assign(norm=0)
+            st_n = df_st.merge(df_y[[m]], on='id_station', how='left').fillna(0).rename(columns={m: 'norm'}) if (not df_y.empty and m in df_y.columns) else df_st.assign(norm=0)
             st_pn = st_p.merge(st_n[['id_station', 'norm']], on='id_station')
             for _, row in st_pn.iterrows():
                 sk = row['nom'][:15]
@@ -1385,11 +1426,11 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
 
     for g_idx, (g_title, g_months) in enumerate(t3_groups):
         hdr1_cols = [f"\\multicolumn{{3}}{{|c|}}{{\\textbf{{{mois_caps[mois_keys.index(m)]}}}}}" for m in g_months]
-        hdr1 = "\\textbf{SUPERFICIE} & \\textbf{RÉGION}" if is_nat else "\\textbf{CODE/STATION} & \\textbf{NOM}"
+        hdr1 = "\\textbf{RÉGION} & \\textbf{SUPERFICIE}" if is_nat else "\\textbf{NOM} & \\textbf{CODE/STATION}"
         hdr1 += " & " + " & ".join(hdr1_cols) + " \\\\"
         
-        hdr2 = " & " + " & ".join(["\\textbf{Pluie} & \\textbf{NORM.} & \\textbf{Rapp}" for _ in g_months]) + " \\\\"
-        hdr3 = " & " + " & ".join(["\\textbf{(mm)} & \\textbf{(mm)} & \\textbf{(\\%)}" for _ in g_months]) + " \\\\"
+        hdr2 = " & (Km²) & " + " & ".join(["\\textbf{Pluie} & \\textbf{NORM.} & \\textbf{Rapp}" for _ in g_months]) + " \\\\"
+        hdr3 = " & & " + " & ".join(["\\textbf{(mm)} & \\textbf{(mm)} & \\textbf{(\\%)}" for _ in g_months]) + " \\\\"
         
         rows_tex = ""
         for reg in target_keys:
@@ -1413,7 +1454,7 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
                     p_str, n_str, r_str = f"\\textbf{{{p_str}}}", f"\\textbf{{{n_str}}}", f"\\textbf{{{r_str}}}"
                 vals.extend([p_str, n_str, r_str])
             
-            rows_tex += f"{surf_display} & {reg_display} & " + " & ".join(vals) + " \\\\\n\\hline\n"
+            rows_tex += f"{reg_display} & {surf_display} & " + " & ".join(vals) + " \\\\\n\\hline\n"
         
         tab_caption = f"Pluies mensuelles {annee}-{annee+1} pour le Gouvernorat de {clean_g}" if not is_nat else f"Pluies mensuelles {annee}-{annee+1} dans les régions naturelles"
         t3_latex += f"""
@@ -1422,7 +1463,7 @@ def generate_section_13_mensuel(conn, annee, gouv='all'):
 \\caption{{{tab_caption} ({g_idx+1}/3)}}
 \\vspace{{0.1cm}}
 \\fontsize{{6}}{{7.5}}\\selectfont
-\\begin{{tabular}}{{|c|l|""" + ("c|c|c|" * 4) + f"""}}
+\\begin{{tabular}}{{|l|c|""" + ("c|c|c|" * 4) + f"""}}
 \\hline
 {hdr1}
 {hdr2}
@@ -1628,10 +1669,10 @@ def generate_section_14_saisonnier(conn, annee, gouv='all'):
     loc_txt = "l'ensemble du pays" if is_nat else f"le Gouvernorat de {clean_g}"
     p1 = f"""\\noindent A l'échelle saisonnière, la répartition des pluies pour {loc_txt} se présente comme suit:
 \\begin{{itemize}}
-    \\item {seasons_map['auto'][0]} a contribué de {seasons_data['auto']['nat']:.1f}\% au total pluviométrique annuel ;
-    \\item {seasons_map['hiver'][0]} a présenté {seasons_data['hiver']['nat']:.1f}\% du total pluviométrique ;
-    \\item {seasons_map['print'][0]} a contribué de {seasons_data['print']['nat']:.1f}\% du total pluviométrique annuel ;
-    \\item {seasons_map['ete'][0]} a contribué de {seasons_data['ete']['nat']:.1f}\% au total pluviométrique de l’année {annee}-{str(annee+1)[2:]}.
+    \\item {seasons_map['auto'][0]} a contribué de {seasons_data['auto']['nat']:.1f}\\% au total pluviométrique annuel ;
+    \\item {seasons_map['hiver'][0]} a présenté {seasons_data['hiver']['nat']:.1f}\\% du total pluviométrique ;
+    \\item {seasons_map['print'][0]} a contribué de {seasons_data['print']['nat']:.1f}\\% du total pluviométrique annuel ;
+    \\item {seasons_map['ete'][0]} a contribué de {seasons_data['ete']['nat']:.1f}\\% au total pluviométrique de l’année {annee}-{str(annee+1)[2:]}.
 \\end{{itemize}}"""
 
     hierarchy_bullets = []
@@ -1674,15 +1715,20 @@ def generate_section_14_saisonnier(conn, annee, gouv='all'):
         'CENTRE EST': 42, 'SUD OUEST': 41, 'SUD EST': 22, 'TUNISIE': 42
     }
 
-    q_y = "SELECT code::text AS id_station, auto, hiver, print, ete, total AS total_moy FROM yasra_data;"
+    q_y = "SELECT id_station, moy AS total_moy FROM moy_interannuelle;"
     df_y = pd.read_sql(q_y, conn).set_index('id_station')
 
     df_st = pd.read_sql("SELECT id_station, gouvernorat, lon, lat FROM station_148;", conn)
     df_st['norm_gouv'] = df_st['gouvernorat'].apply(normalize_string)
 
     df_pn = df_st.merge(df_se[['id_station', 'auto', 'hiver', 'print', 'ete', 'total']], on='id_station', how='left').fillna(0)
-    df_pn = df_pn.merge(df_y[['auto', 'hiver', 'print', 'ete', 'total_moy']], on='id_station', how='left').fillna(0)
-    df_pn.columns = ['id_station', 'gouvernorat', 'norm_gouv', 'lon', 'lat', 'auto_p', 'hiver_p', 'print_p', 'ete_p', 'total_p', 'auto_n', 'hiver_n', 'print_n', 'ete_n', 'total_n']
+    df_pn = df_pn.merge(df_y, on='id_station', how='left').fillna(0)
+    df_pn['auto_n'] = 0.0
+    df_pn['hiver_n'] = 0.0
+    df_pn['print_n'] = 0.0
+    df_pn['ete_n'] = 0.0
+    df_pn['total_n'] = df_pn['total_moy']
+    df_pn = df_pn[['id_station', 'gouvernorat', 'norm_gouv', 'lon', 'lat', 'auto', 'hiver', 'print', 'ete', 'total', 'auto_n', 'hiver_n', 'print_n', 'ete_n', 'total_n']]
 
     if is_nat:
         for reg_name in REGIONS_DEF.keys():
@@ -1894,6 +1940,115 @@ def generate_section_14_table7_cumule(conn, annee, gouv='all'):
         avg_str = f"{avg_val:.1f}".replace('.', ',')
         tex += f"\\multicolumn{{13}}{{|r|}}{{\\textbf{{MOYENNE}}}} & \\textbf{{{avg_str}}} \\\\ \\hline\n"
 
+    # Tableau récapitulatif des régions naturelles à la fin du Tableau 7
+    REGIONS_DEF = {
+        'NORD OUEST': {'surf': 16517, 'gouvs': ['jendouba', 'beja', 'le kef', 'kef', 'siliana']},
+        'NORD EST': {'surf': 11725, 'gouvs': ['tunis', 'ariana', 'ben arous', 'manouba', 'nabeul', 'zaghouan', 'bizerte']},
+        'CENTRE OUEST': {'surf': 22184, 'gouvs': ['kairouan', 'kassrine', 'kasserine', 'sidi bouzid']},
+        'CENTRE EST': {'surf': 13430, 'gouvs': ['sousse', 'monastir', 'mahdia', 'sfax']},
+        'SUD OUEST': {'surf': 35761, 'gouvs': ['gafsa', 'tozeur', 'kebili', 'kebeli']},
+        'SUD EST': {'surf': 55305, 'gouvs': ['gabes', 'tatouine', 'tataouine', 'mednine', 'medenine']}
+    }
+    
+    df_st_all = pd.read_sql("SELECT id_station, gouvernorat, lon, lat FROM station_148;", conn)
+    df_st_all['norm_gouv'] = df_st_all['gouvernorat'].apply(normalize_string)
+    bad_coords_mask = (df_st_all['norm_gouv'].isin(['manouba', 'tunis', 'ariana', 'ben arous', 'bizerte', 'beja', 'jandouba'])) & (df_st_all['lat'] < 3800000)
+    df_st_clean = df_st_all[~bad_coords_mask]
+    thiessen = get_thiessen_weights(conn, df_st_clean)
+    
+    df_cum_full = df_st_all.merge(cum_pivot, on='id_station', how='left').fillna(0)
+
+    tex += """\\hline
+\\multicolumn{14}{|c|}{\\textbf{TABLEAU RÉCAPITULATIF DES RÉGIONS NATURELLES (CUMULS)}} \\\\ \\hline
+\\textbf{STATION} & \\textbf{SUPERFICIE en Km2} & \\textbf{SEPT} & \\textbf{OCTO} & \\textbf{NOVE} & \\textbf{DECE} & \\textbf{JANV} & \\textbf{FEV} & \\textbf{MAR} & \\textbf{AVR} & \\textbf{MAI} & \\textbf{JUIN} & \\textbf{JUIL} & \\textbf{AOUT} \\\\ \\hline
+"""
+    tot_surf = sum(r['surf'] for r in REGIONS_DEF.values())
+    reg_cum_vals = {}
+    for rname, rinfo in REGIONS_DEF.items():
+        rweights = thiessen['regional'].get(rname, {})
+        row_str_list = []
+        reg_cum_vals[rname] = {}
+        for m in mois_order:
+            val_m = compute_weighted_avg(df_cum_full, m, rweights)
+            reg_cum_vals[rname][m] = val_m
+            row_str_list.append(f"{val_m:.1f}".replace('.', ','))
+        tex += f"\\textbf{{{rname}}} & \\textbf{{{rinfo['surf']}}} & " + " & ".join(row_str_list) + " \\\\\n\\hline\n"
+
+    # Total Tunisie
+    nat_cum_list = []
+    for m in mois_order:
+        nat_val_m = sum(reg_cum_vals[r][m] * REGIONS_DEF[r]['surf'] for r in REGIONS_DEF) / tot_surf if tot_surf > 0 else 0
+        nat_cum_list.append(f"\\textbf{{{nat_val_m:.1f}}}".replace('.', ','))
+    tex += f"\\textbf{{TUNISIE}} & \\textbf{{{tot_surf}}} & " + " & ".join(nat_cum_list) + " \\\\\n\\hline\n"
+
+    tex += """\\end{longtable}
+\\end{center}
+"""
+    return tex
+
+
+def generate_section_14_table8_jours_pluie(conn, annee, gouv='all'):
+    """Génère le Tableau 8 : Nombre de jours de pluies pour l'année [annee]-[annee+1] sous forme de longtable LaTeX."""
+    date_debut, date_fin = f"{annee}-09-01 00:00:00", f"{annee+1}-08-31 23:59:59"
+    q = f"""
+        WITH cleaned AS (
+            SELECT DISTINCT ON (id_station, date_obs::date)
+                id_station,
+                EXTRACT(MONTH FROM date_obs)::int AS m,
+                valeur_mm
+            FROM pluies_148
+            WHERE date_obs >= '{date_debut}' AND date_obs <= '{date_fin}' AND valeur_mm IS NOT NULL AND valeur_mm >= 1.0
+        )
+        SELECT id_station, m, COUNT(*) AS days_m
+        FROM cleaned
+        GROUP BY id_station, m;
+    """
+    df_m = pd.read_sql(q, conn)
+
+    mois_order = [9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8]
+    pivot = df_m.pivot(index='id_station', columns='m', values='days_m').fillna(0)
+
+    for m in mois_order:
+        if m not in pivot.columns:
+            pivot[m] = 0
+    pivot = pivot[mois_order]
+    pivot['total_days'] = pivot.sum(axis=1)
+
+    df_st = pd.read_sql("SELECT id_station, gouvernorat, nom FROM station_148 ORDER BY gouvernorat, nom;", conn)
+    if gouv.lower() not in ('all', 'national'):
+        df_st['norm_gouv'] = df_st['gouvernorat'].apply(normalize_string)
+        df_st = df_st[df_st['norm_gouv'] == normalize_string(gouv)]
+
+    df = df_st.merge(pivot.reset_index(), on='id_station', how='left').fillna(0)
+
+    tex = f"""
+\\newpage
+\\subsection*{{Tableau 8 : Nombre de jours de pluies pour l’année {annee}-{annee+1}}}
+\\addcontentsline{{toc}}{{subsection}}{{Tableau 8 : Nombre de jours de pluies pour l’année {annee}-{annee+1}}}
+\\begin{{center}}
+\\fontsize{{5.5}}{{7.5}}\\selectfont
+\\setlength{{\\tabcolsep}}{{2pt}}
+\\begin{{longtable}}{{|l|l|c|c|c|c|c|c|c|c|c|c|c|c|c|}}
+\\hline
+\\textbf{{CODE}} & \\textbf{{STATION}} & \\textbf{{SEPT}} & \\textbf{{OCTO}} & \\textbf{{NOVE}} & \\textbf{{DECE}} & \\textbf{{JANV}} & \\textbf{{FEV}} & \\textbf{{MARS}} & \\textbf{{AVRI}} & \\textbf{{MAI}} & \\textbf{{JUIN}} & \\textbf{{JUIL}} & \\textbf{{AOUT}} & \\textbf{{TOTAL}} \\\\ \\hline
+\\endhead
+"""
+
+    gouvernorats = df['gouvernorat'].unique()
+    for gname in gouvernorats:
+        tex += f"\\multicolumn{{15}}{{|l|}}{{\\textbf{{GOUVERNORAT DE {gname.upper()}}}}} \\\\ \\hline\n"
+        sub = df[df['gouvernorat'] == gname].sort_values(by='nom')
+        for idx, row in sub.iterrows():
+            code = str(row['id_station'])
+            nom = escape_latex(row['nom'].upper())
+            vals = [f"{int(row[m])}" for m in mois_order]
+            tot_d = int(row['total_days'])
+            tex += f"{code} & {nom} & " + " & ".join(vals) + f" & \\textbf{{{tot_d}}} \\\\\n\\hline\n"
+        
+        avg_tot_d = sub['total_days'].mean()
+        avg_d_str = f"{avg_tot_d:.0f}"
+        tex += f"\\multicolumn{{14}}{{|r|}}{{\\textbf{{MOYENNE}}}} & \\textbf{{{avg_d_str}}} \\\\ \\hline\n"
+
     tex += """\\end{longtable}
 \\end{center}
 """
@@ -1975,7 +2130,7 @@ def write_complete_latex(stats, daily_latex, gouv, annee, output_tex, conn, df_s
 \definecolor{clsgreen}{HTML}{D4EFDF}
 
 \usepackage{array}
-\newcommand{\hdr}[1]{\textbf{\fontsize{4.5}{5.5}\selectfont #1}}
+\newcommand{\hdr}[1]{\textbf{#1}}
 \hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
 
 % Configuration de la pagination globale
@@ -2132,10 +2287,10 @@ La critique des données comporte une vérification initiale à la réception de
             FROM cleaned
             GROUP BY id_station
         )
-        SELECT s.gouvernorat, s.nom AS station, s.lon, s.lat, s.altitude, t.total, y.moy_, s.id_station
+        SELECT s.gouvernorat, s.nom AS station, s.lon, s.lat, s.altitude, t.total, y.moy AS moy_, s.id_station
         FROM totals t
         JOIN station_148 s ON s.id_station = t.id_station
-        LEFT JOIN yasra_data y ON y.code::text = t.id_station;
+        LEFT JOIN moy_interannuelle y ON y.id_station = t.id_station;
     """
     df_curr_yasra = pd.read_sql(q_curr_dynamic, conn)
     df_curr_yasra['norm_gouv'] = df_curr_yasra['gouvernorat'].apply(normalize_string)
@@ -2214,20 +2369,20 @@ La critique des données comporte une vérification initiale à la réception de
                 reg_p_annee = compute_weighted_avg(df_curr_yasra, 'total', reg_weights)
                 reg_p_moy = compute_weighted_avg(df_curr_yasra, 'moy_', reg_weights)
                 ecart_reg = reg_p_annee - reg_p_moy
+                rapp_reg = (reg_p_annee / reg_p_moy) if reg_p_moy > 0 else 0
                 pct_reg = ((reg_p_annee / reg_p_moy) - 1.0) * 100 if reg_p_moy > 0 else 0
-                sign_reg = '+' if pct_reg >= 0 else ''
                 tot_p_annee_sum += reg_p_annee * reg_info['surf']
                 tot_p_moy_sum += reg_p_moy * reg_info['surf']
-                tab1_rows += f"{reg_name} & {reg_info['surf']} & {reg_p_annee:.0f} & {reg_p_moy:.0f} & {ecart_reg:+.0f} & {sign_reg}{pct_reg:.0f}\\% \\\\\n\\hline\n"
+                tab1_rows += f"{reg_name} & {reg_info['surf']} & {reg_p_annee:.0f} & {reg_p_moy:.0f} & {ecart_reg:+.0f} & {rapp_reg:.2f}".replace('.', ',') + f" & {pct_reg:+.0f}\\% \\\\\n\\hline\n"
             else:
                 list_items_latex += f"    \\item \\textbf{{Au {reg_name.title()}}}, données non disponibles pour l'année en cours.\n"
 
         nat_p_annee = tot_p_annee_sum / tot_surf if tot_surf > 0 else 0
         nat_p_moy = tot_p_moy_sum / tot_surf if tot_surf > 0 else 0
         nat_ecart = nat_p_annee - nat_p_moy
+        nat_rapp = (nat_p_annee / nat_p_moy) if nat_p_moy > 0 else 0
         nat_pct = ((nat_p_annee / nat_p_moy) - 1.0) * 100 if nat_p_moy > 0 else 0
-        nat_sign = '+' if nat_pct >= 0 else ''
-        tab1_rows += f"\\textbf{{TUNISIE}} & \\textbf{{{tot_surf}}} & \\textbf{{{nat_p_annee:.0f}}} & \\textbf{{{nat_p_moy:.0f}}} & \\textbf{{{nat_ecart:+.0f}}} & \\textbf{{{nat_sign}{nat_pct:.0f}\\%}} \\\\\n\\hline\n"
+        tab1_rows += f"\\textbf{{TUNISIE}} & \\textbf{{{tot_surf}}} & \\textbf{{{nat_p_annee:.0f}}} & \\textbf{{{nat_p_moy:.0f}}} & \\textbf{{{nat_ecart:+.0f}}} & \\textbf{{{nat_rapp:.2f}}}".replace('.', ',') + f" & \\textbf{{{nat_pct:+.0f}\\%}} \\\\\n\\hline\n"
 
         if not df_hist_8.empty:
             df_hist_8['norm_gouv'] = df_hist_8['gouvernorat'].apply(normalize_string)
@@ -2291,20 +2446,20 @@ La critique des données comporte une vérification initiale à la réception de
             p_moy = row['moy_'] if pd.notna(row['moy_']) else 0
             alt_val = f"{float(row['altitude']):.0f}" if pd.notna(row['altitude']) and str(row['altitude']).strip() != '' else "-"
             ecart_mm = p_tot - p_moy
+            rapp_val = (p_tot / p_moy) if p_moy > 0 else 0
             pct_val = ((p_tot / p_moy) - 1.0) * 100 if p_moy > 0 else 0
-            sign_str = '+' if pct_val >= 0 else ''
             diff_type = "un excédent" if pct_val >= 0 else "un déficit"
             
             list_items_latex += f"    \\item \\textbf{{À la station {st_nom}}}, on a enregistré un cumul annuel de {p_tot:.0f} mm avec {diff_type} de {abs(pct_val):.0f}\\% par rapport à la moyenne ({p_moy:.0f} mm).\n"
-            tab1_rows += f"{st_nom} & {alt_val} & {p_tot:.0f} & {p_moy:.0f} & {ecart_mm:+.0f} & {sign_str}{pct_val:.0f}\\% \\\\\n\\hline\n"
+            tab1_rows += f"{st_nom} & {alt_val} & {p_tot:.0f} & {p_moy:.0f} & {ecart_mm:+.0f} & {rapp_val:.2f}".replace('.', ',') + f" & {pct_val:+.0f}\\% \\\\\n\\hline\n"
 
         # Summary row for governorate
         g_avg_tot = sub_curr_g['total'].mean() if not sub_curr_g.empty else 0
         g_avg_moy = sub_curr_g['moy_'].mean() if not sub_curr_g.empty else 0
         g_ecart = g_avg_tot - g_avg_moy
+        g_rapp = (g_avg_tot / g_avg_moy) if g_avg_moy > 0 else 0
         g_pct = ((g_avg_tot / g_avg_moy) - 1.0) * 100 if g_avg_moy > 0 else 0
-        g_sign = '+' if g_pct >= 0 else ''
-        tab1_rows += f"\\textbf{{MOYENNE {clean_gouv.upper()}}} & \\textbf{{-}} & \\textbf{{{g_avg_tot:.0f}}} & \\textbf{{{g_avg_moy:.0f}}} & \\textbf{{{g_ecart:+.0f}}} & \\textbf{{{g_sign}{g_pct:.0f}\\%}} \\\\\n\\hline\n"
+        tab1_rows += f"\\textbf{{MOYENNE {clean_gouv.upper()}}} & \\textbf{{-}} & \\textbf{{{g_avg_tot:.0f}}} & \\textbf{{{g_avg_moy:.0f}}} & \\textbf{{{g_ecart:+.0f}}} & \\textbf{{{g_rapp:.2f}}}".replace('.', ',') + f" & \\textbf{{{g_pct:+.0f}\\%}} \\\\\n\\hline\n"
 
         if not df_hist_8.empty:
             df_hist_g = df_hist_8[df_hist_8['gouvernorat'].apply(normalize_string) == target_g_norm]
@@ -2378,10 +2533,11 @@ Le total pluviométrique de l’année hydrologique """ + f"{annee}-{annee+1}" +
 \centering
 \caption{""" + tab1_title_txt + r"""}
 \vspace{0.1cm}
-\fontsize{7.5}{9}\selectfont
-\begin{tabular}{|l|c|c|c|c|c|}
+\fontsize{7}{8.5}\selectfont
+\begin{tabular}{|l|c|c|c|c|c|c|}
 \hline
-\textbf{""" + tab1_col1_lbl + r"""} & \textbf{Surf/Alt} & \textbf{Pluie (mm)} & \textbf{Moy (mm)} & \textbf{Écart (mm)} & \textbf{Écart (\%)} \\ \hline
+\textbf{""" + tab1_col1_lbl + r"""} & \textbf{Superficie} & \textbf{(I) Pluie} & \textbf{(II) Moyenne} & \textbf{(III) Écart} & \textbf{(IV) Rapport} & \textbf{(V) Excédent (+)} \\ 
+ & \textbf{(Km²)} & \textbf{""" + f"{annee}-{annee+1}" + r""" (mm)} & \textbf{(mm)} & \textbf{(mm)} & \textbf{à la moyenne} & \textbf{ou Déficit (-) \%} \\ \hline
 """ + tab1_rows + r"""\end{tabular}
 \end{table}
 
@@ -2422,7 +2578,7 @@ Le tableau ci-dessous présentant les totaux pluviométriques pour les huit ann�
 """
 
     sec_mensuel = generate_section_13_mensuel(conn, annee, gouv=gouv)
-    sec_saisonnier = generate_section_14_saisonnier(conn, annee, gouv=gouv) + generate_section_14_table7_cumule(conn, annee, gouv=gouv)
+    sec_saisonnier = generate_section_14_saisonnier(conn, annee, gouv=gouv) + generate_section_14_table7_cumule(conn, annee, gouv=gouv) + generate_section_14_table8_jours_pluie(conn, annee, gouv=gouv)
 
     sec_classes = r"""
 \section{Répartition par Classe de Pluviométrie}
@@ -2754,9 +2910,9 @@ Au bas de chaque tableau, nous précisons :
 \end{itemize}
 \vspace{0.4cm}
 
-\renewcommand{\arraystretch}{0.65}
+\renewcommand{\arraystretch}{2.2}
 \setlength{\tabcolsep}{1.2pt}
-\tiny
+\scriptsize
 """ + daily_latex + r"""
 """
 
@@ -2780,7 +2936,8 @@ def compile_latex(tex_file, output_pdf):
             print(f"⚙️ Compilation avec {engine} (3 passes)...")
             success = True
             for i in range(3):
-                cmd = [eng_path, '-interaction=nonstopmode', '-synctex=1', tex_file]
+                output_dir = os.path.dirname(os.path.abspath(tex_file))
+                cmd = [eng_path, '-interaction=nonstopmode', '-synctex=1', f'-output-directory={output_dir}', tex_file]
                 result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
                 if result.returncode != 0:
                     print(f"⚠️ Avertissement lors de la passe {i+1} de {engine}")

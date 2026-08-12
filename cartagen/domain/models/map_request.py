@@ -12,6 +12,7 @@ class MapRequest:
     created_at: datetime
     user_id: Optional[str] = None
     custom_specifications: Optional[Dict[str, Any]] = None
+    use_rag: bool = False
 
 @dataclass
 class ExecutionResult:

@@ -69,7 +69,7 @@ graph TD
 
 L'application utilise un modèle optimisé s'appuyant sur :
 * `pluies_148` : Table principale filtrée des observations pluviométriques journalières (~838k lignes) correspondant strictement aux 142 stations retenues.
-* `yasra_data` : Table de référence des 148 stations contenant les normales mensuelles/saisonnières/annuelles, la moyenne historique (`moy_`) et le pourcentage (`pct` / `%`) importés d'Excel.
+* `moy_interannuelle` : Table de référence contenant les moyennes historiques annuelles fixes (`moy`) des stations (2 colonnes : `id_station`, `moy`).
 * `ann_stations` : Référentiel des stations (coordonnées UTM 32N $x$/$y$, altitude, gouvernorat, bassin).
 * `limite_pays_polygon` & `gouvernorats` : Geometries PostGIS en UTM 32N (EPSG:32632) pour les masques spatiaux.
 

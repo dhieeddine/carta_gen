@@ -11,7 +11,7 @@ from cartagen.infrastructure.database.vector_manager import VectorManager
 # Charger l'environnement
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dhiadhia@localhost:5432/dgre_db")
-WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", r"D:\Desktop\stage_dgre\carta_gen")
+WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     print("[SYNC] Initialisation du pipeline de synchronisation Zvec...")
@@ -115,14 +115,52 @@ def main():
         {
             "table_name": "isohyet_map_standard_template",
             "description": (
-                "Code Python de référence pour générer des cartes isohyètes normalisées (generate_isohyet_map) avec interpolation IDW, "
-                "désactivation de la notation scientifique 1e6 sur les axes UTM (ScalarFormatter(useOffset=False).set_scientific(False)), "
-                "palette standard de 8 couleurs (du bleu foncé pour le max vers le vert, le jaune, le rouge et le 1er intervalle 'none' sans couleur: "
-                "['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']), "
-                "et niveaux par catégories de période (<1 mois: [0, 5, 10, 20, 30, 50, 75, 100, 150] (<5 à >100 mm), "
-                "1 mois à <1 an: [0, 20, 50, 75, 100, 150, 200, 250, 350] (<20 à >250 mm), "
-                ">=1 an: [0, 50, 100, 200, 400, 600, 800, 1000, 1200] (<50 à >1200 mm)), "
-                "boussole / rose des vents (N, S, E, O) et légende par Patches."
+                "Code Python de référence DGRE pour cartes isohyètes (cKDTree IDW, GeoPandas PostGIS EPSG:32632, Matplotlib, ListedColormap, ScalarFormatter). "
+                "Code: \n"
+                "engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])\n"
+                "df = pd.read_sql(query, engine)\n"
+                "gdf_pays = gpd.read_postgis('SELECT geom FROM limite_pays_polygon', engine, geom_col='geom').to_crs('EPSG:32632')\n"
+                "gdf_gouv = gpd.read_postgis('SELECT lib_fr, geom FROM gouvernorats', engine, geom_col='geom').to_crs('EPSG:32632')\n"
+                "gdf_st = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs='EPSG:4326').to_crs('EPSG:32632')\n"
+                "tree = cKDTree(df[['x', 'y']].values)\n"
+                "distances, indices = tree.query(grid_points, k=min(10, len(df)))\n"
+                "z_1d = np.sum((1.0 / (np.maximum(distances, 1e-10)**2) / (1.0 / (np.maximum(distances, 1e-10)**2)).sum(axis=1, keepdims=True)) * df[col].values[indices], axis=1)\n"
+                "mask_1d = contains(gdf_pays.geometry.unary_union.simplify(100), grid_points[:, 0], grid_points[:, 1])\n"
+                "z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)\n"
+                "cf = ax.contourf(x_mesh, y_mesh, z_2d, levels=10, cmap='Blues', alpha=0.75)\n"
+                "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')"
+            )
+        },
+        {
+            "table_name": "histogram_chart_template",
+            "description": (
+                "Code Python de référence DGRE pour graphiques en barres, histogrammes et courbes d'évolution temporelle des précipitations (Matplotlib, Seaborn). "
+                "Code: \n"
+                "engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])\n"
+                "df = pd.read_sql(query, engine)\n"
+                "fig, ax = plt.subplots(figsize=(10, 5))\n"
+                "ax.bar(df['station'], df[target_col], color='#2980b9', edgecolor='black', alpha=0.85)\n"
+                "ax.set_xticklabels(df['station'], rotation=45, ha='right', fontsize=9)\n"
+                "ax.set_ylabel('Précipitations (mm)', fontsize=11, fontweight='bold')\n"
+                "ax.set_title('Histogramme de la pluviométrie', fontsize=12, fontweight='bold')\n"
+                "ax.grid(True, linestyle='--', alpha=0.5)\n"
+                "plt.tight_layout()\n"
+                "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')\n"
+                "df.to_html('output_table.html', index=False, classes='table table-striped')"
+            )
+        },
+        {
+            "table_name": "tabular_analysis_template",
+            "description": (
+                "Code Python de référence DGRE pour export de tableaux d'analyse statistique et bilans hydrauliques (Pandas to_html). "
+                "Code: \n"
+                "engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])\n"
+                "df = pd.read_sql(query, engine)\n"
+                "df.to_html('output_table.html', index=False, classes='table table-striped table-hover')\n"
+                "fig, ax = plt.subplots(figsize=(6, 4))\n"
+                "ax.axis('off')\n"
+                "ax.text(0.5, 0.5, 'Tableau de données généré avec succès', ha='center', va='center', fontsize=12, fontweight='bold')\n"
+                "plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')"
             )
         }
     ]

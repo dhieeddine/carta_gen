@@ -15,14 +15,12 @@ env/
 
 # Fichiers de Configuration / Secrets (CRITIQUE)
 .env
-.env.*
-!.env.example
-
 # Base vectorielle locale et logs
 zvec_store/
 sandbox_runs/
 *.log
-
+data/
+data*/
 # Dossiers d'images générées temporairement
 images_temp*/
 

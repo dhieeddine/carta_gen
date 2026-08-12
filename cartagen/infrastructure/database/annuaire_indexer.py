@@ -349,13 +349,16 @@ class AnnuaireIndexer:
             lines = []
             if not df_max.empty:
                 r = df_max.iloc[0]
-                lines.append(f"Record absolu de précipitations : La station la plus arrosée est {r['nom']} ({r['gouvernorat']}) en {r['annee']} avec un cumul record de {r['total']:.1f} mm.")
+                total_val = float(r['total']) if r['total'] is not None else 0.0
+                lines.append(f"Record absolu de précipitations : La station la plus arrosée est {r['nom']} ({r['gouvernorat']}) en {r['annee']} avec un cumul record de {total_val:.1f} mm.")
             
             for _, r in df_tops.iterrows():
-                lines.append(f"En {r['annee']}, la station la plus arrosée de Tunisie a été {r['nom']} (Gouvernorat de {r['gouvernorat']}) avec un cumul de {r['total']:.1f} mm.")
+                total_val = float(r['total']) if r['total'] is not None else 0.0
+                lines.append(f"En {r['annee']}, la station la plus arrosée de Tunisie a été {r['nom']} (Gouvernorat de {r['gouvernorat']}) avec un cumul de {total_val:.1f} mm.")
 
             for _, r in df_avg_years.iterrows():
-                lines.append(f"En {r['annee']}, la moyenne estimée des précipitations annuelles à l'échelle nationale était de {r['moy_nationale']:.1f} mm par station.")
+                moy_val = float(r['moy_nationale']) if r['moy_nationale'] is not None else 0.0
+                lines.append(f"En {r['annee']}, la moyenne estimée des précipitations annuelles à l'échelle nationale était de {moy_val:.1f} mm par station.")
 
             if lines:
                 chunks.append({
@@ -514,9 +517,9 @@ class AnnuaireIndexer:
                 "couleurs selon l'intensité des cumuls pluviométriques annuels."
             ),
             "carte_interannuelle.png": (
-                "Carte isohyète interannuelle, moyenne pluriannuelle des précipitations spatialisées sur la Tunisie. "
-                "Normale climatique sur plusieurs dizaines d'années, long terme, période de référence, "
-                "variabilité interannuelle des pluies."
+                "Carte des Isohyètes moyennes interannuelles (50 ans) du 1959-2009. "
+                "Moyenne interannuelle sur 50 ans, calculée à partir des valeurs réelles de moy_interannuelle. "
+                "Normale climatologique cinquantennale 1959-2009 de la DGRE."
             ),
             "carte_mensuelle_group1.png": (
                 "Cartes mensuelles des isohyètes pour septembre, octobre et novembre (automne). "
@@ -565,7 +568,23 @@ class AnnuaireIndexer:
                 "Graphique circulaire camembert de la répartition saisonnière des précipitations. "
                 "Diagramme en secteurs (pie chart), proportion de pluie par saison. "
                 "Part relative des cumuls pluviométriques par saison de l'année."
-            )
+            ),
+            "carte_saison_auto.png": "Carte isohyète individuelle de la saison d'Automne (Septembre, Octobre, Novembre). Précipitations automnales.",
+            "carte_saison_hiver.png": "Carte isohyète individuelle de la saison d'Hiver (Décembre, Janvier, Février). Précipitations hivernales.",
+            "carte_saison_print.png": "Carte isohyète individuelle de la saison du Printemps (Mars, Avril, Mai). Précipitations printanières.",
+            "carte_saison_ete.png": "Carte isohyète individuelle de la saison d'Été (Juin, Juillet, Août). Précipitations estivales.",
+            "carte_mois_sept.png": "Carte isohyète individuelle du mois de Septembre.",
+            "carte_mois_octo.png": "Carte isohyète individuelle du mois d'Octobre.",
+            "carte_mois_nove.png": "Carte isohyète individuelle du mois de Novembre.",
+            "carte_mois_dece.png": "Carte isohyète individuelle du mois de Décembre.",
+            "carte_mois_janv.png": "Carte isohyète individuelle du mois de Janvier.",
+            "carte_mois_fev.png": "Carte isohyète individuelle du mois de Février.",
+            "carte_mois_mar.png": "Carte isohyète individuelle du mois de Mars.",
+            "carte_mois_avr.png": "Carte isohyète individuelle du mois d'Avril.",
+            "carte_mois_mai.png": "Carte isohyète individuelle du mois de Mai.",
+            "carte_mois_juin.png": "Carte isohyète individuelle du mois de Juin.",
+            "carte_mois_juil.png": "Carte isohyète individuelle du mois de Juillet.",
+            "carte_mois_aout.png": "Carte isohyète individuelle du mois d'Août."
         }
 
         model = self._get_embedding_model()

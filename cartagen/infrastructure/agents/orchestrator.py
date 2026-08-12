@@ -2,31 +2,40 @@
 
 import os
 import time
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
+
 from cartagen.domain.models.map_request import MapRequest, GeneratedMap, ExecutionResult
+from cartagen.domain.models.agent_message_bus import AgentMessageBus, AgentMessage
 from cartagen.infrastructure.database.postgres_connection import PostgresConnectionManager
 from cartagen.infrastructure.sandbox.sandbox_manager import SandboxManager
 from cartagen.infrastructure.agents.sql_generator_agent import SQLGeneratorAgent
 from cartagen.infrastructure.agents.sig_generator_agent import SIGGeneratorAgent
+from cartagen.infrastructure.agents.data_audit_agent import DataAuditAgent
 from cartagen.infrastructure.database.vector_manager import VectorManager
-
 from cartagen.infrastructure.providers.provider_manager import ProviderManager
+from cartagen.infrastructure.logging.dataset_collector import DatasetCollector
+
 
 class CartaGenOrchestrator:
-    """Orchestrateur central responsable de la coordination du workflow multi-agents."""
+    """Orchestrateur central délibératif gérant la coopération multi-agents autonome."""
 
     def __init__(self, database_url: str, hf_token: str, shapefiles_dir: str, workspace_root: str):
+        self.database_url = database_url
         self.db_manager = PostgresConnectionManager(database_url)
         self.sandbox = SandboxManager(workspace_root, database_url)
         self.shapefiles_dir = shapefiles_dir
+        
+        # Initialisation du Collecteur pour Ré-entraînement LoRA
+        self.dataset_collector = DatasetCollector(workspace_root)
         
         # Initialisation de Zvec Vector DB & Provider Manager
         self.vector_manager = VectorManager(workspace_root)
         self.vector_manager.load_collections()
         self.provider_manager = ProviderManager(workspace_root)
         
-        # Initialisation des Agents
+        # Initialisation des Agents Spécialisés
         self.sql_agent = SQLGeneratorAgent(
             gouv_col="lib_fr",
             reg_col="libelle",
@@ -38,113 +47,156 @@ class CartaGenOrchestrator:
             vector_manager=self.vector_manager,
             provider_manager=self.provider_manager
         )
+        self.audit_agent = DataAuditAgent(database_url)
+        self.message_bus = AgentMessageBus()
 
     def process_request(self, request: MapRequest, llm_provider: Optional[str] = None) -> GeneratedMap:
-        """Exécute le cycle complet de traitement multi-agents.
+        """Exécute le cycle coopératif délibératif multi-agents."""
+        self.message_bus.clear()
         
-        Args:
-            request: La requête de carte à traiter.
-            llm_provider: ID du provider LLM à utiliser (ex: 'kaggle', 'openrouter', 'groq').
-                          Si None, utilise LLM_PROVIDER depuis .env.
-        """
-        # ── Résolution du provider actif ──────────────────────────────────────────
-        # Recharger .env pour capturer les modifications en cours de session
         from dotenv import load_dotenv
         import os as _os
         load_dotenv(dotenv_path=_os.path.join(self.sandbox.workspace_root, ".env"), override=True)
         
-        # 1) Provider explicite du frontend (payload), 2) fallback .env, 3) dernier recours openrouter
         env_provider = _os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
         active_provider = llm_provider.lower().strip() if llm_provider else env_provider
 
-        if self.provider_manager and active_provider in self.provider_manager.providers:
-            pinfo = self.provider_manager.providers[active_provider]
-            provider = pinfo.get("name", active_provider).upper()
-            model_name = pinfo.get("model", "VisCoder2-7B")
-        else:
-            provider = active_provider.upper()
-            if active_provider == "groq":
-                model_name = self.sig_agent.groq_model
-            elif active_provider == "openai":
-                model_name = self.sig_agent.openai_model
-            elif active_provider == "openrouter":
-                model_name = self.sig_agent.openrouter_model
-            elif active_provider == "ollama":
-                model_name = self.sig_agent.ollama_model
-            else:
-                model_name = "VisCoder2-7B (Local)"
+        # Log de démarrage sur le Bus
+        self.message_bus.publish(AgentMessage(
+            sender="Orchestrator",
+            receiver="System",
+            action="INITIALIZE_WORKFLOW",
+            payload={"prompt": request.prompt, "provider": active_provider},
+            status="INFO",
+            description=f"Démarrage du traitement coopératif pour : '{request.prompt}'"
+        ))
 
-        print("="*80)
-        print(f"[Orchestrator] Démarrage du traitement de la requête : '{request.prompt}'")
-        print(f"[Orchestrator] Configuration active : LLM Provider = {provider} | Modèle = {model_name}")
-        print("="*80)
-        
-        # Recherche sémantique dans Zvec (RAG)
+        # ── 1. Intent & Zvec Context (Uniquement si RAG est ACTIVÉ) ────────────────
         vector_context = {}
-        try:
-            print("[Orchestrator -> Zvec DB] Interrogation de l'index vectoriel sémantique...")
-            stations = self.vector_manager.query_stations_by_text(request.prompt, topk=5)
-            schemas = self.vector_manager.query_schemas_by_text(request.prompt, topk=2)
-            vector_context = {"stations": stations, "schemas": schemas}
-            if stations:
-                print(f"[Zvec DB -> Orchestrator] Stations similaires trouvées : {[s['nom'] for s in stations]}")
-            if schemas:
-                print(f"[Zvec DB -> Orchestrator] Schémas de tables recommandés : {[s['table_name'] for s in schemas]}")
-        except Exception as e:
-            print(f"[Orchestrator] Erreur de recherche Zvec : {e}")
+        if getattr(request, "use_rag", False):
+            try:
+                stations = self.vector_manager.query_stations_by_text(request.prompt, topk=5)
+                schemas = self.vector_manager.query_schemas_by_text(request.prompt, topk=2)
+                vector_context = {"stations": stations, "schemas": schemas}
+                self.message_bus.publish(AgentMessage(
+                    sender="ZvecVectorAgent",
+                    receiver="Orchestrator",
+                    action="RETRIEVE_CONTEXT",
+                    payload={"stations_count": len(stations), "schemas_count": len(schemas)},
+                    status="SUCCESS",
+                    description=f"Contextes vectoriels extraits : {len(stations)} stations, {len(schemas)} schémas."
+                ))
+            except Exception as e:
+                print(f"[Orchestrator] Avertissement Zvec : {e}")
+        else:
+            self.message_bus.publish(AgentMessage(
+                sender="ZvecVectorAgent",
+                receiver="Orchestrator",
+                action="RETRIEVE_CONTEXT",
+                payload={"stations_count": 0, "schemas_count": 0},
+                status="SUCCESS",
+                description="Mode Pure LLM Direct actif (RAG désactivé — Aucun chargement d'embeddings)."
+            ))
 
-        # 1. Génération de la requête SQL d'extraction
-        print(f"[Orchestrator -> SQL Agent] Transmission de la requête utilisateur '{request.prompt}' | Provider: {active_provider}")
+        # ── 2. Generation SQL Agent ───────────────────────────────────────────
         self.sql_agent.llm_provider = active_provider
         sql_query, target_col = self.sql_agent.generate_query(request.prompt, vector_context)
         prompt_type = self.sig_agent.detect_prompt_type(request.prompt)
-        print(f"[SQL Agent -> Orchestrator] Requête SQL générée :\n---\n{sql_query}\n---")
-        print(f"[SQL Agent -> Orchestrator] Colonne cible : '{target_col}' | Type de prompt : '{prompt_type}'")
+
+        self.message_bus.publish(AgentMessage(
+            sender="SQLGeneratorAgent",
+            receiver="DataAuditAgent",
+            action="GENERATE_SQL",
+            payload={"sql_query": sql_query, "target_col": target_col},
+            status="SUCCESS",
+            description=f"Requête SQL générée. Colonne cible : '{target_col}'"
+        ))
+
+        # ── 3. Data Audit Agent (Contrôle Qualité Données) ─────────────────────
+        is_valid, audit_msg, audit_df = self.audit_agent.audit_sql_query(sql_query, target_col)
         
-        # 2. Génération initiale du code Python SIG
-        print(f"[Orchestrator -> SIG Agent] Appel de la génération de code Python. Provider: {active_provider} | Modèle: {model_name}...")
+        self.message_bus.publish(AgentMessage(
+            sender="DataAuditAgent",
+            receiver="SIGGeneratorAgent",
+            action="AUDIT_DATA",
+            payload={"valid": is_valid, "report": self.audit_agent.last_audit_report},
+            status="SUCCESS" if is_valid else "WARNING",
+            description=audit_msg
+        ))
+
+        # ── 4. Generation SIG Python Agent ────────────────────────────────────
         self.sig_agent.llm_provider = active_provider
         code = self.sig_agent.generate_code(request.prompt, sql_query, vector_context)
         
-        # Injection de la requête SQL réelle dans le code généré
-        # Échapper les symboles '%' isolés en '%%' pour éviter que psycopg2 ne les interprète comme des marqueurs de paramètres
-        import re
         escaped_sql_query = re.sub(r'(?<!%)%(?!%)', '%%', sql_query)
         code = code.replace("[requete_sql]", escaped_sql_query)
-        
-        # Gestion des remplacements des squelettes géographiques
         code = self._customize_skeleton_replacements(code, request.prompt, target_col)
-        print(f"[SIG Agent -> Orchestrator] Code Python initial généré avec succès ({len(code)} caractères).")
-        
-        # 3. Exécution dans la Sandbox
-        print(f"[Orchestrator -> Sandbox] Lancement de l'exécution isolée du script Python...")
-        exec_res = self.sandbox.execute(code, self.shapefiles_dir)
-        print(f"[Sandbox -> Orchestrator] Exécution terminée. Statut de succès = {exec_res.success}")
-        if not exec_res.success:
-            print(f"[Sandbox -> Orchestrator] Message d'erreur : {exec_res.error_message}")
-        
-        # 4. Cycle d'auto-correction en boucle fermée (Refinement Loop avec injection RAG)
-        if not exec_res.success:
-            print(f"[Orchestrator -> Quality Agent] Échec détecté dans la Sandbox. Lancement de la boucle d'auto-correction...")
-            for attempt in range(1, 3):
-                print(f"[Quality Agent -> SIG Agent] Tentative de correction {attempt}/2 via {model_name}...")
-                code = self.sig_agent.generate_correction(code, exec_res.error_message, vector_context=vector_context, prompt=request.prompt)
-                
-                # Ré-exécution
-                print(f"[Orchestrator -> Sandbox] Ré-exécution du code corrigé...")
-                exec_res = self.sandbox.execute(code, self.shapefiles_dir)
-                print(f"[Sandbox -> Orchestrator] Exécution correction terminée. Statut = {exec_res.success}")
-                if exec_res.success:
-                    print("[Quality Agent -> Orchestrator] Auto-correction réussie avec succès !")
-                    break
-                else:
-                    print(f"[Quality Agent -> Orchestrator] Échec de la tentative de correction : {exec_res.error_message}")
 
-        # 5. Construction de la carte générée finale
-        print("="*80)
-        print(f"[Orchestrator] Traitement terminé. Résultat global = {'SUCCÈS' if exec_res.success else 'ÉCHEC'}")
-        print("="*80)
-        
+        self.message_bus.publish(AgentMessage(
+            sender="SIGGeneratorAgent",
+            receiver="SandboxManager",
+            action="GENERATE_PYTHON_CODE",
+            payload={"code_length": len(code)},
+            status="SUCCESS",
+            description=f"Code Python SIG généré ({len(code)} caractères)."
+        ))
+
+        # ── 5. Execution Sandbox & Quality Verification Agent ──────────────────
+        exec_res = self.sandbox.execute(code, self.shapefiles_dir)
+
+        if exec_res.success:
+            self.message_bus.publish(AgentMessage(
+                sender="QualityVerificationAgent",
+                receiver="Orchestrator",
+                action="VERIFY_EXECUTION",
+                payload={"execution_time": exec_res.execution_time},
+                status="SUCCESS",
+                description=f"Exécution Sandbox réussie en {exec_res.execution_time:.2f}s."
+            ))
+            # Collecte de l'exemple réussi dans le dataset
+            self.dataset_collector.record_successful_pair(
+                prompt=request.prompt,
+                sql_query=sql_query,
+                python_code=code,
+                provider=active_provider,
+                was_corrected=False
+            )
+        else:
+            original_err = exec_res.error_message
+            self.message_bus.publish(AgentMessage(
+                sender="QualityVerificationAgent",
+                receiver="SIGGeneratorAgent",
+                action="DETECT_FAILURE",
+                payload={"error": exec_res.error_message},
+                status="ERROR",
+                description=f"Erreur détectée : {exec_res.error_message}. Lancement de la boucle de correction."
+            ))
+            
+            # Boucle d'auto-correction délibérative (Quality Agent ⇄ SIG Agent)
+            for attempt in range(1, 3):
+                code = self.sig_agent.generate_correction(code, exec_res.error_message, vector_context=vector_context, prompt=request.prompt)
+                exec_res = self.sandbox.execute(code, self.shapefiles_dir)
+                
+                if exec_res.success:
+                    self.message_bus.publish(AgentMessage(
+                        sender="QualityVerificationAgent",
+                        receiver="Orchestrator",
+                        action="AUTO_CORRECTION_SUCCESS",
+                        payload={"attempt": attempt},
+                        status="SUCCESS",
+                        description=f"Auto-correction réussie à la tentative {attempt} !"
+                    ))
+                    # Collecte de l'exemple corrigé avec succès dans le dataset
+                    self.dataset_collector.record_successful_pair(
+                        prompt=request.prompt,
+                        sql_query=sql_query,
+                        python_code=code,
+                        provider=active_provider,
+                        was_corrected=True,
+                        original_error=original_err
+                    )
+                    break
+
         agent_traces = {
             "sql_agent": {
                 "system_prompt": getattr(self.sql_agent, "last_system_prompt", ""),
@@ -156,13 +208,10 @@ class CartaGenOrchestrator:
                 "user_prompt": getattr(self.sig_agent, "last_user_prompt", ""),
                 "response": getattr(self.sig_agent, "last_response", "")
             },
-            "quality_agent": {
-                "system_prompt": getattr(self.sig_agent, "last_correction_system_prompt", ""),
-                "user_prompt": getattr(self.sig_agent, "last_correction_user_prompt", ""),
-                "response": getattr(self.sig_agent, "last_correction_response", "")
-            }
+            "data_audit_agent": self.audit_agent.last_audit_report,
+            "message_bus": self.message_bus.get_traces()
         }
-        
+
         return GeneratedMap(
             request_id=request.request_id,
             prompt=request.prompt,

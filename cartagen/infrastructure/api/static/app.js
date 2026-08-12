@@ -48,7 +48,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             btn.classList.add("active");
             const tabId = btn.getAttribute("data-tab");
-            document.getElementById(tabId).classList.add("active");
+            const targetContent = document.getElementById(tabId);
+            if (targetContent) {
+                targetContent.classList.add("active");
+            }
         });
     });
 
@@ -106,7 +109,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    if (copySqlBtn) {
+    if (copySqlBtn && sqlQueryDisplay) {
         copySqlBtn.addEventListener("click", () => {
             copyTextToClipboard(sqlQueryDisplay.textContent, copySqlBtn);
         });
@@ -172,7 +175,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     prompt: prompt,
-                    llm_provider: selectedProvider
+                    llm_provider: selectedProvider,
+                    use_rag: isRagEnabled
                 })
             });
 
@@ -203,6 +207,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
                 const data = await response.json();
+
+                // Mettre à jour les Traces Agents en temps réel pendant le traitement
+                if (data.agent_traces) {
+                    renderAgentTraces(data.agent_traces);
+                }
 
                 // Logging intelligent
                 if (data.status === "processing" && lastLoggedStatus !== "processing") {
@@ -251,6 +260,22 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnText) btnText.textContent = "Générer la Carte";
     }
 
+    if (generateBtn) {
+        generateBtn.onclick = function(e) {
+            if (e) e.preventDefault();
+            submitPrompt();
+        };
+    }
+
+    if (promptInput) {
+        promptInput.onkeydown = function(e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submitPrompt();
+            }
+        };
+    }
+
     // Rendu graphique des onglets
     function displayMapResults(data) {
         // Rendu de l'image
@@ -287,70 +312,8 @@ document.addEventListener("DOMContentLoaded", () => {
         sqlQueryDisplay.textContent = data.sql || "-- Aucune requête SQL requise.";
 
         // Traces des agents
-        if (data.agent_traces && workflowAgentsDisplay) {
-            const escapeHTML = (str) => {
-                if (!str) return "";
-                return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-            };
-            
-            let html = "";
-            const agents = [
-                { id: "sql_agent", name: "SQL Generator Agent (PostgreSQL)", icon: "fa-database", color: "#3498db" },
-                { id: "sig_agent", name: "SIG Generator Agent (Python & IDW)", icon: "fa-code", color: "#2ecc71" },
-                { id: "quality_agent", name: "Quality Agent (Auto-Correction)", icon: "fa-shield-halved", color: "#e74c3c" }
-            ];
-            
-            agents.forEach(agent => {
-                const trace = data.agent_traces[agent.id];
-                if (trace && (trace.system_prompt || trace.user_prompt || trace.response)) {
-                    html += `
-                    <div class="agent-trace-card" style="border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #111b27; overflow: hidden; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
-                        <div class="agent-trace-header" style="background: #182635; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color);">
-                            <div style="display: flex; align-items: center; gap: 10px;">
-                                <i class="fa-solid ${agent.icon}" style="color: ${agent.color}; font-size: 16px;"></i>
-                                <span style="font-weight: bold; color: var(--text-primary); font-size: 14px;">${agent.name}</span>
-                            </div>
-                            <span style="font-size: 11px; background: ${agent.color}22; color: ${agent.color}; padding: 2px 8px; border-radius: 20px; font-weight: bold; border: 1px solid ${agent.color}44;">Actif</span>
-                        </div>
-                        
-                        <div class="agent-trace-body" style="padding: 15px; display: flex; flex-direction: column; gap: 12px;">
-                            ${trace.system_prompt ? `
-                            <div>
-                                <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                    <i class="fa-solid fa-gears"></i> Prompt Système (Rôle et Règles)
-                                </div>
-                                <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 120px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.system_prompt)}</code></pre>
-                            </div>` : ''}
-                            
-                            ${trace.user_prompt ? `
-                            <div>
-                                <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                    <i class="fa-solid fa-user-gear"></i> Prompt Utilisateur (Contexte RAG & Consigne)
-                                </div>
-                                <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 150px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.user_prompt)}</code></pre>
-                            </div>` : ''}
-                            
-                            ${trace.response ? `
-                            <div>
-                                <div style="font-weight: bold; font-size: 11px; color: var(--text-primary); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                    <i class="fa-solid fa-reply-all" style="color: var(--primary-color);"></i> Réponse de l'Agent (Génération)
-                                </div>
-                                <pre style="background: #060a0f; padding: 12px; border-radius: var(--radius-sm); max-height: 250px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #3b82f622; color: #e2e8f0; white-space: pre-wrap;"><code style="font-family: monospace; color: #38bdf8;">${escapeHTML(trace.response)}</code></pre>
-                            </div>` : ''}
-                        </div>
-                    </div>`;
-                }
-            });
-            
-            if (html) {
-                workflowAgentsDisplay.innerHTML = html;
-            } else {
-                workflowAgentsDisplay.innerHTML = `
-                <div class="placeholder-view" style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
-                    <i class="fa-solid fa-circle-info" style="font-size: 40px; margin-bottom: 15px;"></i>
-                    <p style="margin: 0; font-size: 14px;">Aucune trace d'exécution disponible pour cette requête.</p>
-                </div>`;
-            }
+        if (data.agent_traces) {
+            renderAgentTraces(data.agent_traces);
         }
 
         // Basculer automatiquement sur l'onglet de la carte ou du tableau
@@ -691,11 +654,63 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ============================================================
+    // LOGIQUE D'INGESTION DES SHAPEFILES SPATIAUX
+    // ============================================================
+    const ingestShapefilesBtn = document.getElementById("ingestShapefilesBtn");
+    const shapefilesSpinner = document.getElementById("shapefilesSpinner");
+    const shapefilesResultBox = document.getElementById("shapefilesResultBox");
+    const shapefilesResultMsg = document.getElementById("shapefilesResultMsg");
+
+    if (ingestShapefilesBtn) {
+        ingestShapefilesBtn.addEventListener("click", async () => {
+            const btnText = ingestShapefilesBtn.querySelector(".btn-text");
+            const originalText = btnText.textContent;
+            
+            btnText.textContent = "Vérification et Ingestion...";
+            ingestShapefilesBtn.disabled = true;
+            shapefilesSpinner.classList.remove("hidden");
+            shapefilesResultBox.classList.add("hidden");
+
+            addLog("🗺️ Démarrage de l'importation/vérification des bases spatiales (Shapefiles)...", "system");
+
+            try {
+                const res = await fetch("/api/v1/data/ingest-shapefiles", {
+                    method: "POST"
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Erreur d'importation des shapefiles.");
+
+                if (shapefilesResultMsg) {
+                    shapefilesResultMsg.innerHTML = data.message;
+                }
+                shapefilesResultBox.classList.remove("hidden");
+                
+                if (data.all_existed) {
+                    addLog("✅ Les bases spatiales existent déjà. Aucune action supplémentaire requise.", "success");
+                } else if (data.success) {
+                    addLog("✅ Bases spatiales importées avec succès dans PostgreSQL (PostGIS).", "success");
+                } else {
+                    addLog("⚠️ L'importation s'est terminée avec des erreurs partielles. Vérifiez le rapport.", "failed");
+                }
+                
+            } catch (err) {
+                addLog(`❌ Erreur d'importation des Shapefiles : ${err.message}`, "error");
+                if (shapefilesResultMsg) {
+                    shapefilesResultMsg.innerHTML = `Erreur : ${err.message}`;
+                    shapefilesResultBox.classList.remove("hidden");
+                }
+            } finally {
+                btnText.textContent = originalText;
+                ingestShapefilesBtn.disabled = false;
+                shapefilesSpinner.classList.add("hidden");
+            }
+        });
+    }
+
+    // ============================================================
     // CHAT ANNUAIRE RAG
     // ============================================================
-    const indexAnnuaireBtn = document.getElementById("indexAnnuaireBtn");
-    const indexStatusMsg = document.getElementById("indexStatusMsg");
-    const indexSpinner = document.getElementById("indexSpinner");
     const chatMessages = document.getElementById("chatMessages");
     const chatQuestionInput = document.getElementById("chatQuestionInput");
     const sendChatBtn = document.getElementById("sendChatBtn");
@@ -746,44 +761,156 @@ document.addEventListener("DOMContentLoaded", () => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    function appendTypingIndicator() {
-        if (!chatMessages) return null;
-        const div = document.createElement("div");
-        div.id = "typingIndicator";
-        div.style.cssText = "color:rgba(255,255,255,0.4); font-size:0.85rem; padding:8px;";
-        div.innerHTML = '<i class="fa-solid fa-ellipsis fa-beat"></i> L\'agent analyse les données...';
-        chatMessages.appendChild(div);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-        return div;
-    }
+    function renderAgentTraces(traces) {
+        if (!workflowAgentsDisplay || !traces) return;
 
-    if (indexAnnuaireBtn) {
-        indexAnnuaireBtn.addEventListener("click", async () => {
-            const originalText = indexAnnuaireBtn.querySelector(".btn-text").textContent;
-            indexAnnuaireBtn.querySelector(".btn-text").textContent = "Indexation...";
-            if (indexSpinner) indexSpinner.classList.remove("hidden");
-            indexAnnuaireBtn.disabled = true;
-            if (indexStatusMsg) indexStatusMsg.textContent = "⏳ Indexation en cours (peut prendre 1-2 minutes)...";
+        const escapeHTML = (str) => {
+            if (!str) return "";
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        };
+        
+        let html = "";
+        const agentTraces = traces || {};
+        const busTraces = agentTraces.message_bus || [];
 
-            try {
-                const res = await fetch("/api/v1/annuaire/index", { method: "POST" });
-                const data = await res.json();
-                if (indexStatusMsg) {
-                    indexStatusMsg.textContent = "✅ " + (data.message || "Indexation démarrée en arrière-plan.");
-                    indexStatusMsg.style.color = "#2ecc71";
-                }
-                addLog("✅ Indexation des données annuaire lancée.", "success");
-            } catch (err) {
-                if (indexStatusMsg) {
-                    indexStatusMsg.textContent = "❌ Erreur : " + err.message;
-                    indexStatusMsg.style.color = "#e74c3c";
-                }
-            } finally {
-                indexAnnuaireBtn.querySelector(".btn-text").textContent = originalText;
-                if (indexSpinner) indexSpinner.classList.add("hidden");
-                indexAnnuaireBtn.disabled = false;
+        // Rendu du Bus de Communication Inter-Agents
+        if (busTraces && busTraces.length > 0) {
+            html += `
+            <div style="background: #111b27; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 15px; margin-bottom: 20px;">
+                <h4 style="margin: 0 0 12px 0; color: #38bdf8; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-network-wired"></i> Bus de Communication Inter-Agents (En Direct)
+                </h4>
+                <div style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto;">`;
+            
+            busTraces.forEach(msg => {
+                const statusColor = msg.status === 'SUCCESS' ? '#27ae60' : (msg.status === 'WARNING' ? '#f39c12' : (msg.status === 'ERROR' ? '#e74c3c' : '#3498db'));
+                html += `
+                <div style="display: flex; align-items: center; justify-content: space-between; background: #182635; padding: 8px 12px; border-radius: 6px; font-size: 12px; border-left: 4px solid ${statusColor};">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-weight: bold; color: #fff;">[${msg.sender} ➔ ${msg.receiver}]</span>
+                        <span style="color: var(--text-muted);">${escapeHTML(msg.description)}</span>
+                    </div>
+                    <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: ${statusColor}22; color: ${statusColor}; font-weight: bold;">${msg.action}</span>
+                </div>`;
+            });
+
+            html += `</div></div>`;
+        }
+
+        const agents = [
+            { id: "annuaire_rag_agent", name: "Annuaire RAG Agent (Zvec + SQL + LLM)", icon: "fa-book-open-reader", color: "#f1c40f" },
+            { id: "sql_agent", name: "SQL Generator Agent (PostgreSQL)", icon: "fa-database", color: "#3498db" },
+            { id: "data_audit_agent", name: "Data Audit & Validation Agent", icon: "fa-clipboard-check", color: "#2ecc71" },
+            { id: "sig_agent", name: "SIG & Chart Python Agent (GeoPandas)", icon: "fa-map-location-dot", color: "#9b59b6" }
+        ];
+        
+        agents.forEach(agent => {
+            const trace = agentTraces[agent.id];
+            if (trace && (trace.system_prompt || trace.user_prompt || trace.response || trace.message)) {
+                html += `
+                <div class="agent-trace-card" style="border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #111b27; overflow: hidden; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
+                    <div class="agent-trace-header" style="background: #182635; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color);">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <i class="fa-solid ${agent.icon}" style="color: ${agent.color}; font-size: 16px;"></i>
+                            <span style="font-weight: bold; color: var(--text-primary); font-size: 14px;">${agent.name}</span>
+                        </div>
+                        <span style="font-size: 11px; background: ${agent.color}22; color: ${agent.color}; padding: 2px 8px; border-radius: 20px; font-weight: bold; border: 1px solid ${agent.color}44;">Actif</span>
+                    </div>
+                    
+                    <div class="agent-trace-body" style="padding: 15px; display: flex; flex-direction: column; gap: 12px;">
+                        ${trace.message ? `
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; color: #2ecc71; margin-bottom: 5px; text-transform: uppercase;">
+                                <i class="fa-solid fa-square-check"></i> Rapport d'Audit des Données
+                            </div>
+                            <div style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); font-size: 12px; color: #e2e8f0; border: 1px solid #2ecc7144;">
+                                ${escapeHTML(trace.message)}
+                            </div>
+                        </div>` : ''}
+                        
+                        ${trace.system_prompt ? `
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                <i class="fa-solid fa-gears"></i> Prompt Système (Rôle et Règles)
+                            </div>
+                            <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 120px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.system_prompt)}</code></pre>
+                        </div>` : ''}
+                        
+                        ${trace.user_prompt ? `
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                <i class="fa-solid fa-user-gear"></i> Prompt Utilisateur / Instructions
+                            </div>
+                            <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 150px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.user_prompt)}</code></pre>
+                        </div>` : ''}
+                        
+                        ${trace.response ? `
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; color: var(--text-primary); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
+                                <i class="fa-solid fa-reply-all" style="color: var(--primary-color);"></i> Réponse / Output de l'Agent
+                            </div>
+                            <pre style="background: #060a0f; padding: 12px; border-radius: var(--radius-sm); max-height: 250px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #3b82f622; color: #e2e8f0; white-space: pre-wrap;"><code style="font-family: monospace; color: #38bdf8;">${escapeHTML(trace.response)}</code></pre>
+                        </div>` : ''}
+                    </div>
+                </div>`;
             }
         });
+        
+        if (html) {
+            workflowAgentsDisplay.innerHTML = html;
+        }
+    }
+
+    // Mode RAG par défaut : DÉSACTIVÉ
+    let isRagEnabled = false;
+    const toggleRagBtn = document.getElementById("toggleRagBtn");
+    const indexSpinner = document.getElementById("indexSpinner");
+    const indexStatusMsg = document.getElementById("indexStatusMsg");
+
+    if (toggleRagBtn) {
+        toggleRagBtn.onclick = async function(e) {
+            if (e) e.preventDefault();
+            isRagEnabled = !isRagEnabled;
+            const ragToggleText = document.getElementById("ragToggleText");
+
+            if (isRagEnabled) {
+                toggleRagBtn.style.background = "#27ae60";
+                if (ragToggleText) ragToggleText.textContent = "RAG : ACTIVÉ";
+                toggleRagBtn.setAttribute("data-enabled", "true");
+                
+                // Exécution automatique de l'indexation lors de l'activation
+                if (indexSpinner) indexSpinner.classList.remove("hidden");
+                if (indexStatusMsg) {
+                    indexStatusMsg.textContent = "⏳ Indexation vectorielle auto en cours...";
+                    indexStatusMsg.style.color = "#f1c40f";
+                }
+                
+                try {
+                    const res = await fetch("/api/v1/annuaire/index", { method: "POST" });
+                    const data = await res.json();
+                    if (indexStatusMsg) {
+                        indexStatusMsg.textContent = "✅ RAG activé & Données indexées.";
+                        indexStatusMsg.style.color = "#2ecc71";
+                    }
+                    console.log("🧠 Mode RAG activé et indexation lancée.");
+                } catch (err) {
+                    if (indexStatusMsg) {
+                        indexStatusMsg.textContent = "⚠️ Indexation auto : " + err.message;
+                    }
+                } finally {
+                    if (indexSpinner) indexSpinner.classList.add("hidden");
+                }
+            } else {
+                toggleRagBtn.style.background = "#e74c3c";
+                if (ragToggleText) ragToggleText.textContent = "RAG : DÉSACTIVÉ";
+                toggleRagBtn.setAttribute("data-enabled", "false");
+                if (indexStatusMsg) {
+                    indexStatusMsg.textContent = "⚡ Mode Pure LLM actif (Sans RAG).";
+                    indexStatusMsg.style.color = "#95a5a6";
+                }
+                console.log("⚡ Mode RAG désactivé : Exécution Pure LLM Direct");
+            }
+        };
     }
 
     async function sendChatQuestion() {
@@ -806,129 +933,112 @@ document.addEventListener("DOMContentLoaded", () => {
                 <p style="margin: 0; font-size: 14px;">Analyse en cours... Les traces de l'agent RAG vont s'afficher d'un instant à l'autre.</p>
             </div>`;
         }
-        const typingEl = appendTypingIndicator();
+        const typingEl = document.createElement("div");
+        typingEl.id = "typingIndicator";
+        typingEl.style.cssText = "color:rgba(255,255,255,0.4); font-size:0.85rem; padding:8px;";
+        typingEl.innerHTML = '<i class="fa-solid fa-ellipsis fa-beat"></i> L\'agent analyse les données...';
+        if (chatMessages) {
+            chatMessages.appendChild(typingEl);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
 
         try {
             const res = await fetch("/api/v1/annuaire/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ question, llm_provider: llmProvider })
+                body: JSON.stringify({ question, llm_provider: llmProvider, use_rag: isRagEnabled })
             });
-            const data = await res.json();
-            if (typingEl) typingEl.remove();
+            const initData = await res.json();
+            if (!res.ok) throw new Error(initData.detail || "Échec d'initialisation de la tâche.");
 
-            if (!res.ok) {
-                appendChatMessage("assistant", "❌ Erreur : " + (data.detail || "Réponse invalide."), []);
-            } else {
-                appendChatMessage("assistant", data.answer || "Aucune réponse générée.", data.sources || [], data.images || []);
-                addLog(`💬 Réponse annuaire générée (${data.nb_passages || 0} passages).`, "success");
+            const taskId = initData.request_id;
+            
+            // Polling en direct pour mettre à jour les Traces Agents et le Chat
+            let chatPolling = setInterval(async () => {
+                try {
+                    const statusRes = await fetch(`/api/v1/maps/status/${taskId}`);
+                    if (!statusRes.ok) return;
+                    
+                    const data = await statusRes.json();
+                    
+                    // Rendu des traces des agents en temps réel
+                    if (data.agent_traces) {
+                        renderAgentTraces(data.agent_traces);
+                    }
+                    
+                    if (data.status === "completed") {
+                        clearInterval(chatPolling);
+                        if (typingEl) typingEl.remove();
+                        appendChatMessage("assistant", data.answer || "Aucune réponse générée.", data.sources || [], data.images || []);
+                        addLog(`💬 Réponse annuaire générée (${data.nb_passages || 0} passages).`, "success");
 
-                // Rendu des traces de l'agent RAG
-                if (data.agent_traces && workflowAgentsDisplay) {
-                    const escapeHTML = (str) => {
-                        if (!str) return "";
-                        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-                    };
-                    
-                    let html = "";
-                    const agents = [
-                        { id: "annuaire_rag_agent", name: "Annuaire RAG Agent (Zvec + SQL + LLM)", icon: "fa-book-open-reader", color: "#f1c40f" }
-                    ];
-                    
-                    agents.forEach(agent => {
-                        const trace = data.agent_traces[agent.id];
-                        if (trace && (trace.system_prompt || trace.user_prompt || trace.response)) {
-                            html += `
-                            <div class="agent-trace-card" style="border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #111b27; overflow: hidden; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
-                                <div class="agent-trace-header" style="background: #182635; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color);">
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        <i class="fa-solid ${agent.icon}" style="color: ${agent.color}; font-size: 16px;"></i>
-                                        <span style="font-weight: bold; color: var(--text-primary); font-size: 14px;">${agent.name}</span>
-                                    </div>
-                                    <span style="font-size: 11px; background: ${agent.color}22; color: ${agent.color}; padding: 2px 8px; border-radius: 20px; font-weight: bold; border: 1px solid ${agent.color}44;">Actif</span>
-                                </div>
-                                
-                                <div class="agent-trace-body" style="padding: 15px; display: flex; flex-direction: column; gap: 12px;">
-                                    ${trace.system_prompt ? `
-                                    <div>
-                                        <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                            <i class="fa-solid fa-gears"></i> Prompt Système (Rôle et Règles RAG)
-                                        </div>
-                                        <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 120px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.system_prompt)}</code></pre>
-                                    </div>` : ''}
-                                    
-                                    ${trace.user_prompt ? `
-                                    <div>
-                                        <div style="font-weight: bold; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                            <i class="fa-solid fa-user-gear"></i> Prompt Utilisateur (Contexte RAG & Question)
-                                        </div>
-                                        <pre style="background: #090e15; padding: 10px; border-radius: var(--radius-sm); max-height: 150px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #182635; color: #9ca3af; white-space: pre-wrap;"><code style="font-family: monospace;">${escapeHTML(trace.user_prompt)}</code></pre>
-                                    </div>` : ''}
-                                    
-                                    ${trace.response ? `
-                                    <div>
-                                        <div style="font-weight: bold; font-size: 11px; color: var(--text-primary); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; text-transform: uppercase;">
-                                            <i class="fa-solid fa-reply-all" style="color: var(--primary-color);"></i> Réponse de l'Agent (Synthèse)
-                                        </div>
-                                        <pre style="background: #060a0f; padding: 12px; border-radius: var(--radius-sm); max-height: 250px; overflow-y: auto; margin: 0; font-size: 11.5px; border: 1px solid #3b82f622; color: #e2e8f0; white-space: pre-wrap;"><code style="font-family: monospace; color: #38bdf8;">${escapeHTML(trace.response)}</code></pre>
-                                    </div>` : ''}
-                                </div>
-                            </div>`;
+                        const pythonDisplay = document.getElementById("pythonCodeDisplay");
+                        if (pythonDisplay && data.answer) {
+                            pythonDisplay.textContent = data.answer;
                         }
-                    });
-                    
-                    if (html) {
-                        workflowAgentsDisplay.innerHTML = html;
-                    }
-                }
 
-                // Projection automatique du tableau HTML sur l'onglet Tableau
-                if (data.table_html) {
-                    if (tableDataDisplay) tableDataDisplay.innerHTML = data.table_html;
-                    if (copyTableBtn) copyTableBtn.classList.remove("hidden");
-                    // Toujours basculer sur l'onglet Tableau (index 1) si un tableau est disponible et pas d'image
-                    const tableBtn = document.querySelector('.tab-btn[data-tab="tableau-donnees"]');
-                    if (tableBtn && (!data.images || data.images.length === 0)) {
-                        tableBtn.click();
-                    }
-                }
+                        if (data.table_html) {
+                            if (tableDataDisplay) tableDataDisplay.innerHTML = data.table_html;
+                            if (copyTableBtn) copyTableBtn.classList.remove("hidden");
+                            const tableBtn = document.querySelector('.tab-btn[data-tab="tableau-donnees"]');
+                            if (tableBtn && (!data.images || data.images.length === 0)) {
+                                tableBtn.click();
+                            }
+                        }
 
-                // Projection automatique de l'image/carte sur l'onglet Rendu
-                if (data.images && data.images.length > 0) {
-                    const firstImage = data.images[0];
-                    if (mapPlaceholder) mapPlaceholder.classList.add("hidden");
-                    if (mapImage) {
-                        mapImage.src = firstImage;
-                        mapImage.classList.remove("hidden");
+                        if (data.images && data.images.length > 0) {
+                            const firstImage = data.images[0];
+                            if (mapPlaceholder) mapPlaceholder.classList.add("hidden");
+                            if (mapImage) {
+                                mapImage.src = firstImage;
+                                mapImage.classList.remove("hidden");
+                            }
+                            if (downloadBtn) {
+                                downloadBtn.href = firstImage;
+                                downloadBtn.classList.remove("hidden");
+                            }
+                            if (tabBtns && tabBtns.length > 0) {
+                                tabBtns[0].click();
+                            }
+                        }
+
+                        if (chatSpinner) chatSpinner.classList.add("hidden");
+                        if (sendChatBtn) sendChatBtn.disabled = false;
+                    } else if (data.status === "failed") {
+                        clearInterval(chatPolling);
+                        if (typingEl) typingEl.remove();
+                        appendChatMessage("assistant", "❌ Erreur : " + (data.error || "Échec d'exécution du workflow."), []);
+                        if (chatSpinner) chatSpinner.classList.add("hidden");
+                        if (sendChatBtn) sendChatBtn.disabled = false;
                     }
-                    if (downloadBtn) {
-                        downloadBtn.href = firstImage;
-                        downloadBtn.classList.remove("hidden");
-                    }
-                    // Basculer automatiquement sur l'onglet Rendu (index 0)
-                    if (tabBtns && tabBtns.length > 0) {
-                        tabBtns[0].click();
-                    }
+                } catch (e) {
+                    console.error("Erreur polling chat :", e);
                 }
-            }
+            }, 1000);
+            
         } catch (err) {
             if (typingEl) typingEl.remove();
             appendChatMessage("assistant", "❌ Erreur réseau : " + err.message, []);
-        } finally {
             if (chatSpinner) chatSpinner.classList.add("hidden");
             if (sendChatBtn) sendChatBtn.disabled = false;
         }
     }
 
-    if (sendChatBtn) {
-        sendChatBtn.addEventListener("click", sendChatQuestion);
+    const chatBtn = document.getElementById("sendChatBtn");
+    const chatInput = document.getElementById("chatQuestionInput");
+
+    if (chatBtn) {
+        chatBtn.onclick = function(e) {
+            if (e) e.preventDefault();
+            sendChatQuestion();
+        };
     }
-    if (chatQuestionInput) {
-        chatQuestionInput.addEventListener("keydown", (e) => {
+    if (chatInput) {
+        chatInput.onkeydown = function(e) {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 sendChatQuestion();
             }
-        });
+        };
     }
 });

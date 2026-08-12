@@ -17,16 +17,22 @@ from typing import Optional, Dict, Any
 from cartagen.domain.models.map_request import MapRequest
 from cartagen.infrastructure.agents.orchestrator import CartaGenOrchestrator
 from cartagen.infrastructure.database.mdb_ingest import MdbIngestionService
+from cartagen.infrastructure.database.shapefile_ingest import ShapefileIngestionService
 from cartagen.infrastructure.database.annuaire_indexer import AnnuaireIndexer
 from cartagen.infrastructure.agents.annuaire_rag_agent import AnnuaireRAGAgent
 
 # Configuration globale via variables d'environnement
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/dgre_db")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
-SHAPEFILES_DIR = os.getenv("SHAPEFILES_DIR", r"D:\Desktop\stage_dgre\backend\data\raw")
-WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", r"D:\Desktop\stage_dgre\carta_gen")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_WORKSPACE_ROOT = os.path.abspath(os.path.join(current_dir, '..', '..', '..'))
+DEFAULT_SHAPEFILES_DIR = os.path.abspath(os.path.join(DEFAULT_WORKSPACE_ROOT, 'data', 'raw'))
+
+SHAPEFILES_DIR = os.getenv("SHAPEFILES_DIR", DEFAULT_SHAPEFILES_DIR)
+WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", DEFAULT_WORKSPACE_ROOT)
 
 mdb_service = MdbIngestionService(DATABASE_URL)
+shapefile_service = ShapefileIngestionService(DATABASE_URL, SHAPEFILES_DIR)
 
 app = FastAPI(
     title="CartaGen API — Système Multi-Agents DGRE",
@@ -59,7 +65,8 @@ annuaire_indexer = AnnuaireIndexer(
 annuaire_rag_agent = AnnuaireRAGAgent(
     database_url=DATABASE_URL,
     vector_manager=orchestrator.vector_manager,
-    provider_manager=orchestrator.provider_manager
+    provider_manager=orchestrator.provider_manager,
+    orchestrator=orchestrator
 )
 
 # Monter le répertoire des fichiers statiques pour le frontend
@@ -90,6 +97,7 @@ class YearbookPayload(BaseModel):
 class AnnuaireChatPayload(BaseModel):
     question: str
     llm_provider: Optional[str] = None
+    use_rag: Optional[bool] = True
 
 def normalize_string(s):
     s = unicodedata.normalize('NFKD', str(s)).encode('ascii', errors='ignore').decode('utf-8')
@@ -103,8 +111,16 @@ def run_async_yearbook_generation(request_id: str, year: int, gouv: str):
         sandbox_dir = os.path.join(WORKSPACE_ROOT, "sandbox_runs")
         os.makedirs(sandbox_dir, exist_ok=True)
         
-        pdf_filename = f"annuaire_{normalize_string(gouv)}_{year}_{request_id}.pdf"
+        pdf_filename = f"annuaire_{normalize_string(gouv)}_{year}.pdf"
         pdf_path = os.path.join(sandbox_dir, pdf_filename)
+        
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            task_registry[request_id].update({
+                "status": "completed",
+                "pdf_url": f"/api/v1/yearbook/download/{pdf_filename}",
+                "logs": "L'annuaire a été récupéré depuis le cache (déjà généré précédemment)."
+            })
+            return
         
         script_path = os.path.join(WORKSPACE_ROOT, "generer_annuaire_database.py")
         cmd = [
@@ -187,7 +203,8 @@ async def generate_map(payload: MapPromptPayload, background_tasks: BackgroundTa
         request_id=request_id,
         created_at=datetime.now(),
         user_id=payload.user_id,
-        custom_specifications=payload.custom_specifications
+        custom_specifications=payload.custom_specifications,
+        use_rag=payload.use_rag if payload.use_rag is not None else False
     )
     
     # Enregistrer la tâche dans le registre
@@ -235,12 +252,34 @@ async def get_map_status(request_id: str):
     
     task_data = task_registry[request_id]
     
+    # Si la tâche est en cours d'exécution, attacher les traces du MessageBus et des Prompts LLM en temps réel
+    if task_data.get("status") in ["queued", "processing"]:
+        if "agent_traces" not in task_data:
+            task_data["agent_traces"] = {}
+        task_data["agent_traces"]["message_bus"] = orchestrator.message_bus.get_traces()
+        if hasattr(orchestrator.audit_agent, "last_audit_report") and orchestrator.audit_agent.last_audit_report:
+            task_data["agent_traces"]["data_audit_agent"] = orchestrator.audit_agent.last_audit_report
+        task_data["agent_traces"]["sql_agent"] = {
+            "system_prompt": getattr(orchestrator.sql_agent, "last_system_prompt", ""),
+            "user_prompt": getattr(orchestrator.sql_agent, "last_user_prompt", ""),
+            "response": getattr(orchestrator.sql_agent, "last_response", "")
+        }
+        task_data["agent_traces"]["sig_agent"] = {
+            "system_prompt": getattr(orchestrator.sig_agent, "last_system_prompt", ""),
+            "user_prompt": getattr(orchestrator.sig_agent, "last_user_prompt", ""),
+            "response": getattr(orchestrator.sig_agent, "last_response", "")
+        }
+        task_data["agent_traces"]["annuaire_rag_agent"] = {
+            "system_prompt": getattr(annuaire_rag_agent, "last_system_prompt", ""),
+            "user_prompt": getattr(annuaire_rag_agent, "last_user_prompt", ""),
+            "response": getattr(annuaire_rag_agent, "last_response", "")
+        }
+
     # Si terminé, renvoyer l'URL d'accès à l'image plutôt que le chemin disque local
     response = task_data.copy()
     if task_data.get("status") == "completed" and "image_path" in task_data:
         filename = os.path.basename(task_data["image_path"])
         response["image_url"] = f"/api/v1/maps/image/{filename}"
-        # Supprimer le chemin d'accès absolu pour la sécurité
         if "image_path" in response:
             del response["image_path"]
             
@@ -344,6 +383,21 @@ async def ingest_mdb_file(
         print(f"[API Ingest MDB] Exception : {e}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement de l'ingestion : {str(e)}")
 
+@app.post("/api/v1/data/ingest-shapefiles")
+async def ingest_shapefiles():
+    """Vérifie ou ingère les bases spatiales (Shapefiles) dans PostgreSQL."""
+    try:
+        result = shapefile_service.ingest_shapefiles()
+        if not result.get("success"):
+            # Si des erreurs partielles, on peut quand même renvoyer 200 avec le message, ou 500
+            pass # We return the result and let the frontend handle the display
+        return result
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[API Ingest Shapefiles] Exception : {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'ingestion des shapefiles : {str(e)}")
+
 @app.post("/api/v1/annuaire/index", status_code=202)
 async def index_annuaire_data(background_tasks: BackgroundTasks):
     """Indexe (ou réindexe) les données pluviométriques de la BDD dans Zvec."""
@@ -361,21 +415,51 @@ async def index_annuaire_data(background_tasks: BackgroundTasks):
     }
 
 @app.post("/api/v1/annuaire/chat")
-async def chat_annuaire(payload: AnnuaireChatPayload):
-    """Répond aux questions sur les annuaires pluviométriques via RAG (Zvec + SQL + LLM)."""
+async def chat_annuaire(payload: AnnuaireChatPayload, background_tasks: BackgroundTasks):
+    """Répond aux questions sur les annuaires pluviométriques via RAG ou LLM Direct (non-bloquant)."""
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="La question ne peut pas être vide.")
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(dotenv_path=os.path.join(WORKSPACE_ROOT, ".env"), override=True)
+    
+    # Créer un ID unique pour suivre la tâche dans le registre
+    request_id = str(uuid.uuid4())
+    task_registry[request_id] = {
+        "status": "processing",
+        "question": payload.question,
+        "created_at": datetime.now().isoformat()
+    }
+    
+    def run_async_chat():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(dotenv_path=os.path.join(WORKSPACE_ROOT, ".env"), override=True)
 
-        env_provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
-        active_provider = payload.llm_provider.lower().strip() if payload.llm_provider else env_provider
+            env_provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
+            active_provider = payload.llm_provider.lower().strip() if payload.llm_provider else env_provider
+            use_rag_flag = bool(payload.use_rag) if payload.use_rag is not None else True
+            
+            result = annuaire_rag_agent.answer(payload.question, llm_provider=active_provider, use_rag=use_rag_flag)
+            
+            task_registry[request_id].update({
+                "status": "completed",
+                "answer": result.get("answer", ""),
+                "sources": result.get("sources", []),
+                "nb_passages": result.get("nb_passages", 0),
+                "images": result.get("images", []),
+                "table_html": result.get("table_html", None),
+                "agent_traces": result.get("agent_traces", {})
+            })
+        except Exception as e:
+            task_registry[request_id].update({
+                "status": "failed",
+                "error": str(e)
+            })
 
-        result = annuaire_rag_agent.answer(payload.question, llm_provider=active_provider)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur du service RAG : {str(e)}")
+    background_tasks.add_task(run_async_chat)
+    
+    return {
+        "request_id": request_id,
+        "status": "processing"
+    }
 
 @app.get("/health")
 async def health_check():

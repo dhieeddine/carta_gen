@@ -63,6 +63,26 @@ class MdbIngestionService:
         CREATE UNIQUE INDEX IF NOT EXISTS idx_ann_pluies_unique 
         ON ann_pluies (gouvernorat, id_station, date_obs);
 
+        CREATE TABLE IF NOT EXISTS station_148 (
+            id_station TEXT PRIMARY KEY,
+            nom TEXT,
+            gouvernorat TEXT,
+            lon DOUBLE PRECISION,
+            lat DOUBLE PRECISION,
+            altitude DOUBLE PRECISION
+        );
+
+        CREATE TABLE IF NOT EXISTS pluies_148 (
+            id BIGSERIAL PRIMARY KEY,
+            id_station TEXT NOT NULL,
+            date_obs TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+            valeur_mm DOUBLE PRECISION,
+            gouvernorat TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pluies_148_unique 
+        ON pluies_148 (id_station, date_obs);
+
         CREATE TABLE IF NOT EXISTS ann_debits (
             id BIGSERIAL PRIMARY KEY,
             gouvernorat TEXT NOT NULL,
@@ -274,6 +294,76 @@ class MdbIngestionService:
                             execute_values(cur, sql_p, p_rows, page_size=2000)
 
                         inserted_count = cur.rowcount if cur.rowcount >= 0 else len(p_rows)
+
+                        # ── Mise à jour synchronisée des tables pluies_148 et station_148 ──
+                        try:
+                            # 1. Assurer l'existence de la table station_148 et de ses contraintes
+                            cur.execute("""
+                                CREATE TABLE IF NOT EXISTS station_148 (
+                                    id_station TEXT PRIMARY KEY,
+                                    nom TEXT,
+                                    gouvernorat TEXT,
+                                    lon DOUBLE PRECISION,
+                                    lat DOUBLE PRECISION,
+                                    altitude DOUBLE PRECISION
+                                );
+                            """)
+                            
+                            # Insérer les stations manquantes dans station_148 par id_station
+                            unique_stations_data = []
+                            seen_st_ids = set()
+                            for r in p_rows:
+                                st_id = r[2]
+                                gouv_st = r[0]
+                                if st_id and st_id not in seen_st_ids:
+                                    seen_st_ids.add(st_id)
+                                    unique_stations_data.append((st_id, f"Station_{st_id}", gouv_st))
+
+                            if unique_stations_data:
+                                sql_st_sync = """
+                                    INSERT INTO station_148 (id_station, nom, gouvernorat)
+                                    VALUES %s
+                                    ON CONFLICT (id_station) DO UPDATE 
+                                    SET gouvernorat = EXCLUDED.gouvernorat
+                                    WHERE station_148.gouvernorat IS NULL OR station_148.gouvernorat = 'Inconnu';
+                                """
+                                execute_values(cur, sql_st_sync, unique_stations_data, page_size=1000)
+
+                            # 2. Assurer l'existence de pluies_148 et de son index d'unicité (id_station, date_obs)
+                            cur.execute("""
+                                CREATE TABLE IF NOT EXISTS pluies_148 (
+                                    id BIGSERIAL PRIMARY KEY,
+                                    id_station TEXT NOT NULL,
+                                    date_obs TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                                    valeur_mm DOUBLE PRECISION,
+                                    gouvernorat TEXT
+                                );
+                            """)
+                            cur.execute("""
+                                CREATE UNIQUE INDEX IF NOT EXISTS idx_pluies_148_unique 
+                                ON pluies_148 (id_station, date_obs);
+                            """)
+
+                            # Format des lignes pour pluies_148 : (id_station, date_obs, valeur_mm, gouvernorat)
+                            p_148_rows = [
+                                (r[2], r[4], r[5], r[0])
+                                for r in p_rows if r[2] and r[4] is not None
+                            ]
+
+                            if p_148_rows:
+                                sql_p148 = """
+                                    INSERT INTO pluies_148 (id_station, date_obs, valeur_mm, gouvernorat)
+                                    VALUES %s
+                                    ON CONFLICT (id_station, date_obs) DO UPDATE
+                                    SET valeur_mm = EXCLUDED.valeur_mm,
+                                        gouvernorat = EXCLUDED.gouvernorat;
+                                """
+                                execute_values(cur, sql_p148, p_148_rows, page_size=2000)
+                                print(f"[MDB Ingest] Synchronisation réussie vers pluies_148 ({len(p_148_rows)} relevés traités).")
+
+                        except Exception as sync_e:
+                            print(f"[MDB Ingest] Avertissement synchro pluies_148/station_148 : {sync_e}")
+
                     log_entry["nb_p"] = inserted_count
 
                 pg_conn.commit()
