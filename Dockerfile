@@ -36,8 +36,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copier l'ensemble du projet CartaGen
 COPY . /app
 
-# Création du dossier de stockage temporaire
-RUN mkdir -p /app/sandbox_runs/uploads
+# Création des dossiers de stockage temporaire et de logs
+RUN mkdir -p /app/sandbox_runs/uploads /app/logs
 
 EXPOSE 8000
 

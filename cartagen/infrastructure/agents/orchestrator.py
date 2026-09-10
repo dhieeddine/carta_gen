@@ -73,7 +73,7 @@ class CartaGenOrchestrator:
 
         # ── 1. Intent & Zvec Context (Uniquement si RAG est ACTIVÉ) ────────────────
         vector_context = {}
-        if getattr(request, "use_rag", False):
+        if getattr(request, "use_rag", True):
             try:
                 stations = self.vector_manager.query_stations_by_text(request.prompt, topk=5)
                 schemas = self.vector_manager.query_schemas_by_text(request.prompt, topk=2)
@@ -212,13 +212,19 @@ class CartaGenOrchestrator:
             "message_bus": self.message_bus.get_traces()
         }
 
+        # Formater l'URL web relative pour l'API et le frontend
+        web_image_url = None
+        if exec_res.output_image_path:
+            filename = os.path.basename(exec_res.output_image_path)
+            web_image_url = f"/api/v1/maps/image/{filename}"
+
         return GeneratedMap(
             request_id=request.request_id,
             prompt=request.prompt,
             prompt_type=prompt_type,
             python_code=code,
             sql_query=sql_query,
-            image_url=exec_res.output_image_path,
+            image_url=web_image_url,
             created_at=datetime.now(),
             execution_details=exec_res,
             table_html=exec_res.output_table_html,

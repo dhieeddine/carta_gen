@@ -2,11 +2,14 @@
 fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
 python-dotenv>=1.0.0
 requests>=2.31.0
 
 # Database Connectivity
 psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
 
 # Geographic Information Systems (GIS) & Science
 numpy>=1.24.0

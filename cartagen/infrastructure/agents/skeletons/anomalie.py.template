@@ -1,0 +1,70 @@
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree
+from shapely.vectorized import contains
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.patches import Patch
+import psycopg2
+import os
+
+conn = psycopg2.connect(os.environ['DATABASE_URL'])
+query = """[requete_sql]"""
+df = pd.read_sql(query, conn)
+conn.close()
+df.columns = df.columns.str.lower()
+
+# Chargement des couches géographiques depuis PostGIS
+import sqlalchemy
+engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+gdf_pays = gpd.read_postgis('SELECT geom FROM limite_pays_polygon', engine, geom_col='geom').to_crs('EPSG:32632')
+gdf_gouv = gpd.read_postgis('SELECT lib_fr, geom FROM gouvernorats', engine, geom_col='geom').to_crs('EPSG:32632')
+
+target_col = '%'
+titre_carte = 'Anomalie Pluviometrique — Pourcentage de la Normale (%)'
+
+bounds = gdf_pays.total_bounds
+x_min, y_min, x_max, y_max = bounds
+margin = 20000
+x_min -= margin; x_max += margin; y_min -= margin; y_max += margin
+x_grid = np.arange(x_min, x_max, 2500)
+y_grid = np.arange(y_min, y_max, 2500)
+x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+grid_points = np.column_stack([x_mesh.ravel(), y_mesh.ravel()])
+
+tree = cKDTree(df[['x', 'y']].values)
+distances, indices = tree.query(grid_points, k=10)
+distances = np.maximum(distances, 1e-10)
+weights = 1.0 / (distances ** 2)
+weights /= weights.sum(axis=1, keepdims=True)
+z_1d = np.sum(weights * df[target_col].values[indices], axis=1)
+
+geom = gdf_pays.geometry.unary_union
+mask_1d = contains(geom, grid_points[:, 0], grid_points[:, 1])
+z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)
+z_2d = np.ma.masked_invalid(z_2d)
+
+niveaux = [0, 50, 75, 90, 110, 150, 300]
+labels  = ['< 50% (Deficit Severe)', '50-75% (Deficit)', '75-90% (Deficit Leger)',
+          '90-110% (Proche Normale)', '110-150% (Excedent)', '> 150% (Excedent Fort)']
+couleurs = ['#d73027', '#f46d43', '#fee090', '#ffffbf', '#abd9e9', '#4575b4']
+cmap = ListedColormap(couleurs)
+norm = BoundaryNorm(niveaux, cmap.N)
+
+fig, ax = plt.subplots(figsize=(9, 11))
+ax.set_aspect('equal')
+gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)
+gdf_gouv.boundary.plot(ax=ax, color='grey', linestyle='--', linewidth=0.8)
+ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.8, extend='both')
+cl = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='black', linewidths=0.5)
+ax.clabel(cl, inline=True, fontsize=8, fmt='%d %%')
+
+legend_elements = [Patch(facecolor=c, label=l) for c, l in zip(couleurs, labels)]
+ax.legend(handles=legend_elements, title='Normale Pluviometrique', loc='lower right', fontsize=8)
+ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
+ax.set_title(titre_carte, fontsize=14, fontweight='bold')
+ax.grid(True, linestyle='--', alpha=0.2)
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

@@ -141,7 +141,11 @@ class AnnuaireRAGAgent:
                 map_req = MapRequest(prompt=question, request_id="chat_gen", created_at=None, user_id=None)
                 gen_map = self.orchestrator.process_request(map_req, llm_provider=self.llm_provider)
                 if gen_map and gen_map.image_url:
-                    detected_images.append(gen_map.image_url)
+                    img_url = gen_map.image_url
+                    if not img_url.startswith("http") and not img_url.startswith("/"):
+                        filename = os.path.basename(img_url)
+                        img_url = f"/api/v1/maps/image/{filename}"
+                    detected_images.append(img_url)
                 if gen_map and gen_map.python_code:
                     generated_code = gen_map.python_code
                 if gen_map and hasattr(gen_map, "agent_traces") and gen_map.agent_traces:
@@ -189,6 +193,7 @@ class AnnuaireRAGAgent:
             "sources": list(set(sources)),
             "nb_passages": len(passages),
             "images": detected_images,
+            "code": generated_code,
             "table_html": table_html,
             "agent_traces": agent_traces
         } 
@@ -675,8 +680,8 @@ class AnnuaireRAGAgent:
             "Tu es l'assistant IA officiel expert pour les ressources en eau et la pluviométrie de la Tunisie (DGRE).\n"
             "DIRECTIVES UNIVERSELLES ET IMPÉRATIVES DE FORMAT :\n"
             "1. CAS DEMANDE DE CARTE OU GRAPHIQUE VISUEL (IMAGE PRÉSENTE OU GÉNÉRÉE) :\n"
-            "   - Démarre OBLIGATOIREMENT par : 'Voici la carte des isohyètes / le graphique pluviométrique demandé :'\n"
-            "   - Donne UNIQUEMENT une synthèse globale synthétique de 2 à 3 lignes (cumul moyen national/régional, gouvernorat le plus arrosé, gouvernorat le moins arrosé).\n"
+            "   - Si la demande concerne les régions naturelles ou le découpage territorial : démarre par 'Voici la carte des régions naturelles demandée :' et résume brièvement les 6 régions officielles DGRE (Nord-Ouest, Nord-Est, Centre-Ouest, Centre-Est, Sud-Ouest, Sud-Est).\n"
+            "   - Si la demande concerne la pluviométrie / isohyètes : démarre par 'Voici la carte des isohyètes / le graphique pluviométrique demandé :' et donne une synthèse globale synthétique de 2 à 3 lignes (cumul moyen national/régional, gouvernorat le plus arrosé, gouvernorat le moins arrosé).\n"
             "   - INTERDICTION ABSOLUE de lister les stations individuelles une par une (pas de '- Station X - 2020: Y mm').\n"
             "2. CAS DEMANDE DE DONNÉES / SYNTHÈSE EN LANGAGE NATUREL :\n"
             "   - Démarre par une courte phrase d'introduction.\n"

@@ -1,0 +1,142 @@
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import unicodedata
+from scipy.spatial import cKDTree
+from shapely.vectorized import contains
+from matplotlib.ticker import ScalarFormatter
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.patches import Patch
+import sqlalchemy
+import os
+
+# Connexion unique via SQLAlchemy
+engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+
+# 1. Charger les données pluviométriques
+query = """[requete_sql]"""
+df = pd.read_sql(query, engine)
+df.columns = df.columns.str.lower()
+
+# 2. Chargement des couches géographiques depuis PostGIS
+gdf_pays = gpd.read_postgis('SELECT geom FROM limite_pays_polygon', engine, geom_col='geom').to_crs('EPSG:32632')
+gdf_gouv_all = gpd.read_postgis('SELECT lib_fr, lib_ar, code, geom FROM gouvernorats', engine, geom_col='geom').to_crs('EPSG:32632')
+
+NOM_GOUV   = '[NOM_DU_GOUVERNORAT]'
+target_col = '[colonne_cible]'
+titre_carte = f'Isohyetes — Gouvernorat de {NOM_GOUV} (Tunisie)'
+
+# 3. Normalisation des accents pour la comparaison (ex: 'Béja' == 'Beja')
+def normalize(s):
+    return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode().lower().strip()
+
+gdf_cible = gdf_gouv_all[gdf_gouv_all['{self.gouv_col}'].apply(normalize) == normalize(NOM_GOUV)].copy()
+if gdf_cible.empty:
+    raise ValueError(f'Gouvernorat {{NOM_GOUV}} non trouve dans la table gouvernorats')
+
+# 4. Nettoyage des données
+if target_col not in df.columns or target_col in ['id', 'x', 'y']:
+    df[target_col] = 1.0
+df = df.dropna(subset=[target_col, 'x', 'y'])
+df = df.reset_index(drop=True)
+if df.empty:
+    raise ValueError(f"Aucune donnée disponible pour la colonne '{target_col}'")
+
+# 5. Reprojection intelligente des stations et filtrage spatial dans le gouvernorat
+if not df.empty and df['x'].abs().max() <= 180:
+    gdf_st_proj = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs='EPSG:4326').to_crs('EPSG:32632')
+    df['x'] = gdf_st_proj.geometry.x
+    df['y'] = gdf_st_proj.geometry.y
+gdf_stations = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs="EPSG:32632")
+gdf_stations_gouv = gpd.sjoin(gdf_stations, gdf_cible[['geometry']], how="inner", predicate="within")
+df_stations_cible = df.loc[df.index.isin(gdf_stations_gouv.index)].copy()
+
+if df_stations_cible.empty:
+    # Fallback : 10 stations les plus proches du centroïde
+    centroid = gdf_cible.geometry.unary_union.centroid
+    df['_dist'] = np.sqrt((df['x'] - centroid.x)**2 + (df['y'] - centroid.y)**2)
+    df_stations_cible = df.nsmallest(10, '_dist').drop(columns=['_dist'])
+
+# 6. Grille d'interpolation — zoomée sur le gouvernorat
+g_bounds = gdf_cible.total_bounds
+margin = 15000
+x_min, y_min, x_max, y_max = g_bounds[0]-margin, g_bounds[1]-margin, g_bounds[2]+margin, g_bounds[3]+margin
+x_grid = np.arange(x_min, x_max, 1000)
+y_grid = np.arange(y_min, y_max, 1000)
+x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+grid_points = np.column_stack([x_mesh.ravel(), y_mesh.ravel()])
+
+coords_locales = df_stations_cible[['x', 'y']].values
+valeurs_locales = df_stations_cible[target_col].values
+tree = cKDTree(coords_locales)
+k_val = min(10, len(df_stations_cible))
+distances, indices = tree.query(grid_points, k=k_val)
+if k_val > 1:
+    distances = np.maximum(distances, 1e-10)
+    weights = 1.0 / (distances ** 2)
+    weights /= weights.sum(axis=1, keepdims=True)
+    z_1d = np.sum(weights * valeurs_locales[indices], axis=1)
+else:
+    z_1d = np.repeat(valeurs_locales[0], len(grid_points))
+
+geom_cible = gdf_cible.geometry.unary_union
+mask_1d = contains(geom_cible, grid_points[:, 0], grid_points[:, 1])
+z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)
+z_2d = np.ma.masked_invalid(z_2d)
+
+if target_col in ['jour', 'valeur_mm', 'valeur', 'jour_mm', 'debit'] or (isinstance(target_col, str) and ('jour' in target_col or 'day' in target_col)):
+    niveaux = [0, 5, 10, 20, 30, 50, 75, 100, 150]
+elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece','auto','hiver','print','ete']:
+    niveaux = [0, 20, 50, 75, 100, 150, 200, 250, 350]
+else:
+    niveaux = [0, 50, 100, 200, 400, 600, 800, 1000, 1200]
+couleurs = ['none', '#ff0000', '#ffff00', '#90ee90', '#228b22', '#4292c6', '#2171b5', '#08306b']
+cmap = ListedColormap(couleurs)
+norm = BoundaryNorm(niveaux, cmap.N)
+
+fig, ax = plt.subplots(figsize=(7, 9))
+ax.set_aspect('equal')
+gdf_gouv_all.boundary.plot(ax=ax, color='lightgrey', linestyle='--', linewidth=0.6)
+gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)
+gdf_cible.boundary.plot(ax=ax, color='black', linewidth=2.0)
+for _, g_row in gdf_gouv_all.iterrows():
+    cent = g_row.geometry.centroid
+    g_name = g_row.get('lib_fr', g_row.get('nom', ''))
+    if g_name:
+        ax.text(cent.x, cent.y, str(g_name), fontsize=5.5, ha='center', va='center', color='#2c3e50', fontweight='bold', alpha=0.65, zorder=6)
+
+if not np.all(np.isnan(z_2d)):
+    cf = ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.75, extend='max')
+    cs = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='#2c3e50', linewidths=0.6)
+    ax.clabel(cs, inline=True, fontsize=7, fmt='%d mm')
+
+ax.scatter(df_stations_cible['x'], df_stations_cible['y'], s=12, color='#c0392b', marker='o', zorder=5)
+ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
+ax.set_title(titre_carte, fontsize=12, fontweight='bold', pad=10)
+ax.set_xlabel('X (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')
+ax.set_ylabel('Y (UTM Zone 32N, m)', fontsize=9, fontweight='bold', fontstyle='italic')
+
+formatter_y = ScalarFormatter(useOffset=False)
+formatter_y.set_scientific(False)
+ax.yaxis.set_major_formatter(formatter_y)
+
+formatter_x = ScalarFormatter(useOffset=False)
+formatter_x.set_scientific(False)
+ax.xaxis.set_major_formatter(formatter_x)
+
+ax.tick_params(axis='x', rotation=45, labelsize=8)
+ax.tick_params(axis='y', rotation=45, labelsize=8)
+for tick in ax.get_xticklabels() + ax.get_yticklabels():
+    tick.set_fontstyle('italic')
+ax.grid(True, linestyle='--', alpha=0.3)
+cx, cy, csize = 0.92, 0.88, 0.05
+ax.annotate('N', xy=(cx, cy + csize), xytext=(cx, cy), arrowprops=dict(facecolor='black', edgecolor='black', width=1.5, headwidth=6, headlength=7), ha='center', va='bottom', fontsize=8, fontweight='bold', xycoords='axes fraction', textcoords='axes fraction')
+ax.text(cx, cy - csize * 0.4, 'S', transform=ax.transAxes, ha='center', va='top', fontsize=7, fontweight='bold')
+ax.text(cx + csize * 0.8, cy + csize * 0.3, 'E', transform=ax.transAxes, ha='left', va='center', fontsize=7, fontweight='bold')
+ax.text(cx - csize * 0.8, cy + csize * 0.3, 'O', transform=ax.transAxes, ha='right', va='center', fontsize=7, fontweight='bold')
+legend_elements = [Patch(facecolor=couleurs[i], label=f"{niveaux[i]} - {niveaux[i+1]} mm" if i < len(niveaux)-2 else f"> {niveaux[i]} mm") for i in range(len(niveaux)-1)]
+ax.legend(handles=legend_elements, title='Pluviométrie', loc='lower left', fontsize=8, title_fontsize=9, framealpha=0.9)
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

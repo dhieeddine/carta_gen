@@ -25,13 +25,17 @@ class PostgresConnectionManager:
 
     def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """Retourne la liste des colonnes et types d'une table pour validation par l'agent SQL."""
-        query = f"""
+        query = """
             SELECT column_name, data_type 
             FROM information_schema.columns 
-            WHERE table_name = '{table_name}';
+            WHERE table_name = %s;
         """
-        df = self.execute_query(query)
-        return df.to_dict(orient="records")
+        conn = self.get_connection()
+        try:
+            df = pd.read_sql(query, conn, params=[table_name])
+            return df.to_dict(orient="records")
+        finally:
+            conn.close()
 
     def test_connection(self) -> bool:
         """Vérifie la viabilité de la connexion."""

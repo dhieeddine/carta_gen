@@ -42,14 +42,14 @@
                         <i class="fa-solid fa-comments" style="color:var(--accent-color);"></i> Chat Annuaire
                     </h3>
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <button id="toggleRagBtn" type="button" data-enabled="false" style="background:#e74c3c; color:#fff; padding:6px 14px; font-size:0.78rem; border-radius:6px; font-weight:600; border:none; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.3s ease;">
+                        <button id="toggleRagBtn" type="button" data-enabled="true" style="background:#27ae60; color:#fff; padding:6px 14px; font-size:0.78rem; border-radius:6px; font-weight:600; border:none; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.3s ease;">
                             <i class="fa-solid fa-brain" style="pointer-events:none;"></i>
-                            <span id="ragToggleText" style="pointer-events:none;">RAG : DÉSACTIVÉ</span>
+                            <span id="ragToggleText" style="pointer-events:none;">RAG : ACTIVÉ</span>
                             <div class="spinner hidden" id="indexSpinner" style="width:12px; height:12px; border-width:2px;"></div>
                         </button>
                     </div>
                 </div>
-                <p id="indexStatusMsg" class="section-desc" style="margin:0; font-size:0.78rem;"></p>
+                <p id="indexStatusMsg" class="section-desc" style="margin:0; font-size:0.78rem; color:#2ecc71;">✅ RAG activé & Données indexées.</p>
 
                 <!-- Zone des messages du chat -->
                 <div id="chatMessages" class="chat-messages-area" style="

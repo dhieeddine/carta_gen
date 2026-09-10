@@ -1,0 +1,484 @@
+=== PAGE 69 ===
+- 59 - 
+ 
+ 
+ 
+ 
+Figure 32 : Extract of the contents of the average tables 
+Table 5 summarizes the total number of data inserted using the developed scripts that be used 
+after to calculate the required indicators too generate the rainfall bulletin. 
+ 
+ 
+ 
+
+
+=== PAGE 70 ===
+- 60 - 
+ 
+ 
+Table 8 : The number of data insred in the PLUVIOM database 
+Table noun Number of 
+data 
+station 128 
+gouvernorat 24 
+region_naturelle 6 
+apport_moyen_station 45 750 
+apport_moyen_gouvernorat 8784 
+apport_moyen_region_naturelle 2562  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+=== PAGE 71 ===
+- 61 - 
+ 
+ 
+III. Description and Interpretation of Application Modules 
+III.1 System aarchitector  
+The development of the web platform for rainfall data management is based on a three -tier 
+architecture ensuring the separation of the Frontend, the Backend, and the data layer . The image 33 
+showen the architecture of the systeme  
+ 
+Figure 33:  System Architector 
+III.1.1 Frontend: 
+The presentation layer is responsible for the user interface and interaction  serves as the direct 
+interface between the system and its users. It is designed to be interactive and dynamic, as requested 
+by users during the diagnostic phase, to facilitate the consultation and entry of rainfall data by 
+technicians and end users.  The interface is developed with HTML5, CSS3,  JavaScript and Bootstrap 
+5.  
+For data visualization  Chart.js is used t o represent pluviometric indicators and historical trends  and 
+Leaflet.js is used to manage and display station locations and rainfall maps interactively. 
+
+
+=== PAGE 72 ===
+- 62 - 
+ 
+ 
+III.1.2 Backend : 
+The backend is the core of the application, managing business logic,  calculations, and database access 
+using Node.js with the  Express.js 
+The frontend communicates with the backend via REST ful APIs for thr real-time updates of  DATA 
+and information’s PLUVOM data base, e ach route communicates with a corresponding table in the 
+database to manage data operations. 
+The REST API is  organized around the main entities of the system: 
+✓ Authentication  
+✓ Stations  
+✓ Rainfall Data  
+✓ BI Indicators  
+✓ Governorates and Natural Regions  
+✓ Import and export to generate reports  
+✓ Cartography 
+Each route communicate with a table in the database to manage data and provided a Key functionalities 
+include: 
+✓ Secure authentication using JSON Web Tokens (JWT), with hierarchical access levels by 
+governorate and central access. 
+✓ Management of stations and rainfall data with full CRUD operations (create, update, soft 
+delete). 
+✓ Automatic generation of BI indicators, calculating the 14 columns of the rainfall bulletin based 
+on historical data. 
+✓ This architecture ensures data consistency, service availability, and modularity, facilitating the 
+future evolution of the application. 
+✓ Report generation using PDFKit, ExcelJS, and docx. 
+✓ Maps ganaration using Leaflet.js 
+III.2 Functional Flowchart 
+From the main window of the portal we can access the various integrated modules. 
+
+=== PAGE 73 ===
+- 63 - 
+ 
+ 
+ 
+Figure 34:  Functional Flowchart 
+III.3 The Application Modules 
+III.3.1 Authentication Module 
+The Authentication Module (Figure 20) allows access to the system with security and access control, 
+ensuring that only authorized users can interact with the system and its various functionalities. It 
+typically involves a login screen where users provide csername and password to access. 
+ 
+Figure 35:the Authentication Module 
+ 
+ Cartography 
+Station Management 
+ 
+Report Generation 
+ 
+Data Import 
+ 
+Statistics and Graphs 
+ 
+Rainfall Data Management 
+Administration  
+Indicator Management 
+ 
+Dashboard 
+Main window 
+ 
+
+=== PAGE 74 ===
+- 64 - 
+ 
+ 
+III.3.2 "Home Module 
+The Home Module in figure 33 serves as the central dashboard and landing page for the Pluviometric 
+Management Application. It provides the system's overview and the core functionalities available to 
+the user. It contains also the key performance indicators (KPIs)  as the nomber of station, The number 
+of daily rainfall data entries during the current month, The calculated average cumulative rainfall and 
+the last entery entry into the system. 
+ 
+Figure 36: the Home Module 
+III.3.3 "Rainfall Data Entry" Module  
+In This module the users record the actual rainfall data collected from the stations and data can be 
+shown in a table  
+ 
+Figure 37: "Rainfall Data Entry" Module  
+ 
+
+
+=== PAGE 75 ===
+- 65 - 
+ 
+ 
+III.3.4 "BI Report" Module  
+The BI module Generate all the indicators allowed by the rainful bulletin  based on pluviometric data 
+entry 
+ 
+Figure 38:"BI Report" Module  
+III.3.5 "IMPORT" Module  
+The import module dedicated to importing pluviometric data from hydracces and hydrass. And users 
+can choose the source file to import CSV or  XML format. 
+ 
+ 
+Figure 39: "IMPORT" Module 
+ 
+
+
+=== PAGE 76 ===
+- 66 - 
+ 
+ 
+III.3.6 Module «Cartographie » 
+The cartography module offers a spatial visualization of the stations and their location  and we can  
+visualize the daily data on an interactive map. 
+ 
+ 
+Figure 40:Module «Cartographie » 
+III.3.7 "Graphic" Module  
+The graphic module is the analytical visualization , it represent trends and comparisons of 
+pluviometric data for deeper analysis 
+ 
+ 
+Figure 41: "Graphic" Module 
+III.3.7 "Station" Module  
+The station module is the management module for the station repository it manage the complete list 
+of pluviometric stations and their attributes 
+ 
+
+
+=== PAGE 77 ===
+- 67 - 
+ 
+ 
+ 
+Figure 42:"Station" Module
+
+
+=== PAGE 78 ===
+- 68 - 
+ 
+ 
+Conclusion générale 
+ 
+This project has laid the foundation of a web centralized system for rainfall data management in 
+Tunisia. By replacing a manual and error-prone process with a  web application built around a postgres  
+database, we have demonstrated the feasibility and relevance of an integrated approach.  
+The current solution meets the immediate needs for data collection, centralization, and consultation, 
+representing a significant step forward for the General Directorate for Water Resources (DGRE) and 
+its partners. 
+ 
+However, this work is only the first step toward a deeper digital transformation. The future work is 
+extensive and revolves around several strategic axes to evolve this tool into a national kowledge 
+managament systemfor water ressources  
+ 
+The next step will be to deploy the application in a controlled test environment with end-users (CRDA 
+agents, ministry staff). This phase will allow for the collection of  user feedback  to identify bugs, 
+optimize usability, and validate the relevance of the features. A continuous improvement cycle based 
+on this feedback will be established to refine the application. 
+ 
+Once the application is stable, the objective will be to make it accessible to a wider audience. This will 
+involve concrete technical steps: 
+• Hosting on a physical server : To ensure performance, security, and data sovereignty, the 
+application will be hosted on a dedicated server within the ministry's infrastructure. 
+• Purchasing a domain name  (www.pluviometrie.tn) will be acquired to facilitate access to the 
+platform. 
+• The application will be officially launched and made accessible to the general public, including 
+farmers, researchers, the media, and citizens interested in water data. 
+ 
+the long -term vision is to transcend simple data management to create a Knowledge Management 
+System (KMS) dedicated to water resources. The PLUVIOM application will be the first module of 
+this integrated platform. Future upgrades will aim to integrate other types of hydrological data: 
+• Groundwater table levels. 
+
+=== PAGE 79 ===
+- 69 - 
+ 
+ 
+• River flow rates. 
+• Dam filling rates. 
+• Water quality. 
+ 
+This KMS will not only centralize information but also contextualize, analyze, and transform it into 
+actionable knowledge. It will integrate predictive analysis tools, dynamic dashboards, and simulation 
+models to support strategic decision -making in water management, thereby making a significant 
+contribution to Tunisia's water security
+
+=== PAGE 80 ===
+- 70 - 
+ 
+ 
+Bibliographie 
+ 
+Agafonkin, V. (2024). Leaflet: An open -source JavaScript library for interactive maps.  
+Retrieved from https://leafletjs.com/ 
+Alavi, M., & Leidner, D. E. (2001). Review: Knowledge management and knowledge 
+management systems: Conceptual foundations and research issues. MIS Quarterly, 25(1), 
+107–136. 
+Argote, L., & Ingram, P. (2000). Knowledge transfer: A basis for competitive advantage 
+in firms. Organizational Behavior and Human Decision Processes, 82(1), 150–169. 
+Baptiste, J. -L. (2024). Merise: Practical guide (4th ed.) Data modeling and SQL 
+manipulation. ENI Editions. 
+Bootstrap Team. (2023). Bootstrap 5 documentation.  Retrieved from 
+https://getbootstrap.com/docs/5.3/ 
+Brown, T. (2009). Change by design: How design thinking transforms organizations and 
+inspires innovation. Harper Business. 
+Bukowitz, W., & Williams, R. (2000). The knowledge management fieldbook.  Prentice 
+Hall. 
+Carlile, P., & Rebentisch, E. (2003). Into the black box: The knowledge transformation 
+cycle. Management Science, 49(9), 1180–1195. 
+Chart.js Contributors. (2024). Chart.js documentation.  Retrieved from 
+https://www.chartjs.org/docs/latest/ 
+Cross, R., & Baird, L. (2000). Technology is not enough: Improving performance by 
+building organizational memory. Sloan Management Review, 41(3), 69–78. 
+Dalkir, K. (2017). Knowledge management in theory and practice (3rd ed.). MIT Press. 
+Davenport, T. H., & Prusak, L. (1998). Working knowledge: How organizations manage 
+what they know. Harvard Business Press. 
+Davis, S., & Botkin, J. (1994). The coming of knowledge -based business. Harvard 
+Business Review, 72(5), 165–170. 
+DGRE. (2023). Annual report on water resources management in Tunisia.  General 
+Directorate of Water Resources. 
+Elgourari, A. (2024). Water resources management in Tunisia. Journal of Water 
+Resources Management, 38(2), 114–126. 
+Evans, M., Dalkir, K., & Bidian, C. (2015). A holistic view of the knowledge life cycle: 
+The Knowledge Management Cycle (KMC) model. Leading Issues in Knowledge 
+Management, 2(2), 1–18. 
+Express.js Foundation. (2024). Express.js guide. “ https://expressjs.com/  
+
+=== PAGE 81 ===
+- 71 - 
+ 
+ 
+FAO. (2022). Climate change and water resource management in North Africa. Food and 
+Agriculture Organization of the United Nations. 
+Holmes, A. (2022). Getting started with Node.js and Express.js. O’Reilly Media. 
+Huber, G. P. (1991). Organizational learning: The contributing processes and the 
+literatures. Organization Science, 2(1), 88–115. 
+ISO/IEC. (2016). ISO/IEC 9075 -1:2016 — Information technology — Database 
+languages — SQL — Part 1: Framework (SQL/Framework).  International Organization 
+for Standardization. 
+Jones, M., Bradley, J., & Sakimura, N. (2015). RFC 7519: JSON Web Token (JWT).  
+Internet Engineering Task Force. https://www.rfc-editor.org/rfc/rfc7519 
+JORT. (2001). Official Journal of the Republic of Tunisia. Government of Tunisia. 
+King, W. R. (1995). Knowledge management: A strategic agenda. IBM Systems Journal, 
+34(4), 1–12. 
+King, W. R. (2005). Ensuring greater knowledge production and utilization through 
+knowledge management. Decision Support Systems, 39(4), 493–496. 
+King, W. R., & Ko, D. G. (2001). Evaluating knowledge management and the learning 
+organization: An information/knowledge value chain approach. Communications of the 
+Association for Information Systems, 5(1), 14. 
+Koskinen, I. (2018). How to build competencies for a data -driven business. Technology 
+Innovation Management Review. 
+McElroy, M. (2003). The new knowledge management: Complexity, learning, and 
+sustainable innovation. Butterworth-Heinemann. 
+Meyer, M., & Zack, M. (1996). The design and implementation of information products. 
+Sloan Management Review, 37(3), 83–93. 
+Mozilla Developer Network. (2024). JavaScript guide.  Mozilla Foundation. Retrieved 
+from https://developer.mozilla.org/en-US/docs/Web/JavaScript 
+Node.js Foundation. (2024). Node.js documentation.  Retrieved from 
+https://nodejs.org/en/docs/ 
+Nonaka, I. (1994). A dynamic theory of organizational knowledge creation. Organization 
+Science, 5(1), 14–37. 
+Nonaka, I., & Takeuchi, H. (1995). The knowledge -creating company: How Japanese 
+companies create the dynamics of innovation. Oxford University Press. 
+ONAGRI. (2023). Annual report on the water sector: Executive summary.  National 
+Observatory of Agriculture, Tunisia. 
+OpenJS Foundation. (2024). OpenJS libraries documentation.  Retrieved from 
+https://openjsf.org/ 
+OWASP Foundation. (2024). OWASP Top 10: Web Application Security Risks.  
+Retrieved from https://owasp.org/www-project-top-ten/ 
+
+=== PAGE 82 ===
+- 72 - 
+ 
+ 
+pgAdmin Development Team. (2024). pgAdmin 4 documentation.  Retrieved from 
+https://www.pgadmin.org/docs/ 
+PostgreSQL Global Development Group. (2024). PostgreSQL documentation. Retrieved 
+from https://www.postgresql.org/docs/ 
+PowerAMC (SAP PowerDesigner). (2023). SAP PowerDesigner documentation.  SAP 
+Help Portal. 
+Provos, N., & Mazières, D. (1999). The bcrypt adaptive password hashing algorithm.  
+Retrieved from https://www.openwall.com/crypt/ 
+Python Software Foundation. (2024). Python 3 documentation.  Retrieved from 
+https://docs.python.org/3/ 
+SAP. (2023). SAP PowerDesigner documentation.  Retrieved from 
+https://help.sap.com/viewer/product/SAP_POWERDESIGNER 
+Stonebraker, M., Kemnitz, G., Brown, P., & Bear, C. (2018). The design of PostgreSQL: 
+An advanced open-source database system. MIT Press. 
+Sveiby, K. E. (1997). The new organizational wealth: Managing and measuring 
+knowledge-based assets. Berrett-Koehler Publishers. 
+Tuomi, I. (1999). Data is more than knowledge: Implications of the reversed knowledge 
+hierarchy for knowledge management and organizational memory. Journal of 
+Management Information Systems, 16(3), 103–117. 
+von Hippel, E. (1986). Lead users: A source of novel product concepts. Management 
+Science, 32(7), 791–805. 
+Wiig, K. M. (1993). Knowledge management foundations: Thinking about thinking How 
+people and organizations create, represent, and use knowledge. Schema Press. 
+World Wide Web Consortium (W3C). (2017). HTML5: A vocabulary and associated 
+APIs for HTML and XHTML. Retrieved from https://www.w3.org/TR/html5/ 
+World Wide Web Consortium (W3C). (2021). CSS Snapshot 2021.  Retrieved from 
+https://www.w3.org/TR/css-2021/ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+=== PAGE 83 ===
+- 73 - 
+ 
+ 
+Annex  1 
+SECADENORD : 
+ 
+ 
+ 
+ 
+
+
+=== PAGE 84 ===
+- 74 - 
+ 
+ 
+ 
+Water Recharge departement  
+ 
+ 
+
+
+=== PAGE 85 ===
+- 75 - 
+ 
+ 
+ 
+ 
+
+
+=== PAGE 86 ===
+- 76 - 
+ 
+ 
+ 
+
+
+=== PAGE 87 ===
+- 77 - 
+ 
+ 
+ 
+
+
+=== PAGE 88 ===
+- 78 - 
+ 
+ 
+ 
+
+
+=== PAGE 89 ===
+- 79 - 
+ 
+ 
+ 
+
+
+=== PAGE 90 ===
+- 80 - 
+ 
+ 
+ 
+
+
+=== PAGE 91 ===
+- 81 - 
+ 
+ 
+ 
+
+
+=== PAGE 92 ===
+- 82 - 
+ 
+ 
+ 
+
+
+=== PAGE 93 ===
+- 83 - 
+ 
+ 
+ 
+
+
+=== PAGE 94 ===
+- 84 - 
+ 
+ 
+ 
+Annex 2:  the bulletin of the 16 april 20025 
+ 
+ 
+ 
+ 
+
+
+=== PAGE 95 ===
+- 85 - 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+:  
+
+

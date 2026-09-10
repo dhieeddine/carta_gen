@@ -21,9 +21,14 @@ from cartagen.infrastructure.database.shapefile_ingest import ShapefileIngestion
 from cartagen.infrastructure.database.annuaire_indexer import AnnuaireIndexer
 from cartagen.infrastructure.agents.annuaire_rag_agent import AnnuaireRAGAgent
 
-# Configuration globale via variables d'environnement
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/dgre_db")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
+# Configuration globale via variables d'environnement et Pydantic BaseSettings
+from dotenv import load_dotenv
+load_dotenv()
+from cartagen.infrastructure.config import get_settings
+
+settings = get_settings()
+DATABASE_URL = settings.database_url
+HF_TOKEN = settings.hf_token
 current_dir = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_WORKSPACE_ROOT = os.path.abspath(os.path.join(current_dir, '..', '..', '..'))
 DEFAULT_SHAPEFILES_DIR = os.path.abspath(os.path.join(DEFAULT_WORKSPACE_ROOT, 'data', 'raw'))
@@ -40,13 +45,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configuration CORS pour permettre la connexion du Frontend web
+# Configuration CORS configurable via .env pour la sécurité en production
+ALLOWED_ORIGINS = settings.allowed_origins.split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in ALLOWED_ORIGINS],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Initialisation de l'orchestrateur
@@ -80,6 +87,7 @@ class MapPromptPayload(BaseModel):
     user_id: Optional[str] = None
     llm_provider: Optional[str] = None   # None = lire LLM_PROVIDER depuis .env au moment de l'exécution
     custom_specifications: Optional[Dict[str, Any]] = None
+    use_rag: Optional[bool] = True
 
 class ProviderConfigPayload(BaseModel):
     id: Optional[str] = None
@@ -204,7 +212,7 @@ async def generate_map(payload: MapPromptPayload, background_tasks: BackgroundTa
         created_at=datetime.now(),
         user_id=payload.user_id,
         custom_specifications=payload.custom_specifications,
-        use_rag=payload.use_rag if payload.use_rag is not None else False
+        use_rag=payload.use_rag if getattr(payload, 'use_rag', None) is not None else True
     )
     
     # Enregistrer la tâche dans le registre
@@ -288,11 +296,11 @@ async def get_map_status(request_id: str):
 @app.get("/api/v1/maps/image/{filename}")
 async def get_map_image(filename: str):
     """Sert l'image de la carte d'isohyètes générée par la Sandbox."""
-    # Recherche dans le dossier temporaire de la Sandbox
-    sandbox_dir = os.path.join(WORKSPACE_ROOT, "sandbox_runs")
-    image_path = os.path.join(sandbox_dir, filename)
+    safe_filename = os.path.basename(filename)
+    sandbox_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "sandbox_runs"))
+    image_path = os.path.abspath(os.path.join(sandbox_dir, safe_filename))
     
-    if not os.path.exists(image_path):
+    if not image_path.startswith(sandbox_dir) or not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Image de carte non trouvée.")
         
     return FileResponse(image_path, media_type="image/png")
@@ -303,12 +311,14 @@ async def get_annuaire_image(folder_name: str, filename: str):
     if not re.match(r"^images_temp_[a-zA-Z0-9_]+$", folder_name):
         raise HTTPException(status_code=400, detail="Nom de dossier invalide.")
         
-    image_path = os.path.join(WORKSPACE_ROOT, folder_name, filename)
+    safe_filename = os.path.basename(filename)
+    base_folder = os.path.abspath(os.path.join(WORKSPACE_ROOT, folder_name))
+    image_path = os.path.abspath(os.path.join(base_folder, safe_filename))
     
-    if not os.path.exists(image_path):
-        # Fallback de compatibilité vers images_temp au cas où
-        fallback_path = os.path.join(WORKSPACE_ROOT, "images_temp", filename)
-        if os.path.exists(fallback_path):
+    if not image_path.startswith(base_folder) or not os.path.exists(image_path):
+        fallback_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "images_temp"))
+        fallback_path = os.path.abspath(os.path.join(fallback_dir, safe_filename))
+        if fallback_path.startswith(fallback_dir) and os.path.exists(fallback_path):
             return FileResponse(fallback_path, media_type="image/png")
         raise HTTPException(status_code=404, detail="Image de l'annuaire non trouvée.")
         
@@ -337,11 +347,14 @@ async def generate_yearbook(payload: YearbookPayload, background_tasks: Backgrou
 @app.get("/api/v1/yearbook/download/{filename}")
 async def download_yearbook(filename: str):
     """Télécharge le fichier PDF généré de l'annuaire."""
-    sandbox_dir = os.path.join(WORKSPACE_ROOT, "sandbox_runs")
-    pdf_path = os.path.join(sandbox_dir, filename)
-    if not os.path.exists(pdf_path):
+    safe_filename = os.path.basename(filename)
+    if not safe_filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Format de fichier non autorisé.")
+    sandbox_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "sandbox_runs"))
+    pdf_path = os.path.abspath(os.path.join(sandbox_dir, safe_filename))
+    if not pdf_path.startswith(sandbox_dir) or not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="Annuaire PDF introuvable.")
-    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
+    return FileResponse(pdf_path, media_type="application/pdf", filename=safe_filename)
 
 @app.post("/api/v1/data/ingest-mdb")
 async def ingest_mdb_file(
@@ -439,12 +452,23 @@ async def chat_annuaire(payload: AnnuaireChatPayload, background_tasks: Backgrou
             
             result = annuaire_rag_agent.answer(payload.question, llm_provider=active_provider, use_rag=use_rag_flag)
             
+            # Normalisation systématique des URLs d'images pour le navigateur
+            raw_images = result.get("images", [])
+            normalized_images = []
+            for img in raw_images:
+                if img.startswith("http://") or img.startswith("https://") or img.startswith("/"):
+                    normalized_images.append(img)
+                else:
+                    filename = os.path.basename(img)
+                    normalized_images.append(f"/api/v1/maps/image/{filename}")
+
             task_registry[request_id].update({
                 "status": "completed",
                 "answer": result.get("answer", ""),
                 "sources": result.get("sources", []),
                 "nb_passages": result.get("nb_passages", 0),
-                "images": result.get("images", []),
+                "images": normalized_images,
+                "code": result.get("code", ""),
                 "table_html": result.get("table_html", None),
                 "agent_traces": result.get("agent_traces", {})
             })

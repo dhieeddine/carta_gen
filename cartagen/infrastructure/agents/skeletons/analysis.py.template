@@ -1,0 +1,19 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import sqlalchemy
+
+# 1. Connexion via SQLAlchemy
+engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+
+# 2. Charger les données pluviométriques
+query = """[requete_sql]"""
+df = pd.read_sql(query, engine)
+df.columns = df.columns.str.lower()
+
+# 3. Analyse de données et génération de figures (Seaborn/Matplotlib)
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

@@ -276,14 +276,25 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 
+    // Résolution robuste des URLs d'images (convertit chemins disque locaux en URLs API)
+    function resolveImageUrl(url) {
+        if (!url) return "";
+        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/")) {
+            return url;
+        }
+        const filename = url.split(/[/\\]/).pop();
+        return `/api/v1/maps/image/${filename}`;
+    }
+
     // Rendu graphique des onglets
     function displayMapResults(data) {
         // Rendu de l'image
         if (data.image_url) {
+            const safeUrl = resolveImageUrl(data.image_url);
             mapPlaceholder.classList.add("hidden");
-            mapImage.src = data.image_url;
+            mapImage.src = safeUrl;
             mapImage.classList.remove("hidden");
-            downloadBtn.href = data.image_url;
+            downloadBtn.href = safeUrl;
             downloadBtn.classList.remove("hidden");
         } else {
             mapImage.classList.add("hidden");
@@ -737,11 +748,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (images && images.length > 0 && role === 'assistant') {
             images.forEach(imgUrl => {
+                const safeUrl = resolveImageUrl(imgUrl);
                 const img = document.createElement("img");
-                img.src = imgUrl;
+                img.src = safeUrl;
                 img.style.cssText = "max-width:100%; max-height:300px; border-radius:8px; margin-top:8px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; object-fit:contain;";
                 img.title = "Cliquer pour ouvrir en grand";
-                img.addEventListener("click", () => window.open(imgUrl, '_blank'));
+                img.addEventListener("click", () => window.open(safeUrl, '_blank'));
                 wrapper.appendChild(img);
             });
         }
@@ -861,8 +873,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // Mode RAG par défaut : DÉSACTIVÉ
-    let isRagEnabled = false;
+    // Mode RAG par défaut : ACTIVÉ
+    let isRagEnabled = true;
     const toggleRagBtn = document.getElementById("toggleRagBtn");
     const indexSpinner = document.getElementById("indexSpinner");
     const indexStatusMsg = document.getElementById("indexStatusMsg");
@@ -973,8 +985,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         addLog(`💬 Réponse annuaire générée (${data.nb_passages || 0} passages).`, "success");
 
                         const pythonDisplay = document.getElementById("pythonCodeDisplay");
-                        if (pythonDisplay && data.answer) {
-                            pythonDisplay.textContent = data.answer;
+                        if (pythonDisplay && (data.code || data.answer)) {
+                            pythonDisplay.textContent = data.code || data.answer;
                         }
 
                         if (data.table_html) {
@@ -987,7 +999,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         }
 
                         if (data.images && data.images.length > 0) {
-                            const firstImage = data.images[0];
+                            const firstImage = resolveImageUrl(data.images[0]);
                             if (mapPlaceholder) mapPlaceholder.classList.add("hidden");
                             if (mapImage) {
                                 mapImage.src = firstImage;

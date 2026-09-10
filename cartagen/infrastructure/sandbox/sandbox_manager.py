@@ -2,13 +2,81 @@
 
 import os
 import sys
+import ast
 import uuid
 import time
 import shutil
 import subprocess
 from io import StringIO
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from cartagen.domain.models.map_request import ExecutionResult
+
+
+class CodeSecurityValidator:
+    """Analyse statique du code Python généré par le LLM pour détecter les opérations dangereuses.
+    
+    Utilise l'arbre syntaxique abstrait (AST) pour vérifier que le code ne contient
+    pas d'imports ou d'appels de fonctions pouvant compromettre la sécurité du système.
+    """
+
+    BLOCKED_MODULES = {
+        'subprocess', 'shutil', 'socket', 'http', 'urllib',
+        'ftplib', 'smtplib', 'telnetlib', 'ctypes', 'multiprocessing',
+        'threading', 'signal', 'pickle', 'shelve',
+        'webbrowser', 'code', 'codeop', 'compileall',
+    }
+
+    BLOCKED_FUNCTIONS = {
+        'exec', 'eval', 'compile', '__import__', 'globals', 'locals',
+    }
+
+    BLOCKED_ATTR_CALLS = {
+        'system', 'popen', 'execvp', 'spawn', 'spawnl', 'spawnle',
+        'remove', 'unlink', 'rmdir', 'rmtree', 'rename', 'chmod',
+        'chown', 'kill', 'fork',
+    }
+
+    @classmethod
+    def validate(cls, code: str) -> Tuple[bool, str]:
+        """Valide le code Python généré par le LLM.
+        
+        Args:
+            code: Code Python à valider.
+            
+        Returns:
+            Tuple[bool, str]: (is_safe, reason). is_safe=True si le code est sûr.
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return False, f"Erreur de syntaxe dans le code généré : {e}"
+
+        for node in ast.walk(tree):
+            # Vérifier les imports directs (import X)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    module_root = alias.name.split('.')[0]
+                    if module_root in cls.BLOCKED_MODULES:
+                        return False, f"Import bloqué par le validateur de sécurité : '{alias.name}'"
+
+            # Vérifier les imports from (from X import Y)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    module_root = node.module.split('.')[0]
+                    if module_root in cls.BLOCKED_MODULES:
+                        return False, f"Import bloqué par le validateur de sécurité : 'from {node.module}'"
+
+            # Vérifier les appels de fonctions dangereuses
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in cls.BLOCKED_FUNCTIONS:
+                        return False, f"Fonction dangereuse bloquée : {node.func.id}()"
+                elif isinstance(node.func, ast.Attribute):
+                    if node.func.attr in cls.BLOCKED_ATTR_CALLS:
+                        return False, f"Appel système dangereux bloqué : .{node.func.attr}()"
+
+        return True, "Code validé — aucune opération dangereuse détectée"
+
 
 class SandboxManager:
     """Gère l'exécution sécurisée et isolée du code Python de rendu géospatiale."""
@@ -24,6 +92,19 @@ class SandboxManager:
         Exécute le code Python dans un répertoire temporaire isolé.
         Copie les shapefiles d'intérêt et injecte la connexion PostgreSQL.
         """
+        # Validation sécurité du code LLM avant toute exécution
+        is_safe, reason = CodeSecurityValidator.validate(code)
+        if not is_safe:
+            return ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                output_image_path=None,
+                error_message=f"Code rejeté par le validateur de sécurité : {reason}",
+                execution_time=0.0,
+                output_table_html=None
+            )
+
         run_id = str(uuid.uuid4())
         run_dir = os.path.join(self.sandbox_dir, run_id)
         os.makedirs(run_dir, exist_ok=True)

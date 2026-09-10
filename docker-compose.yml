@@ -36,11 +36,14 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-groq}
       GROQ_API_KEY: ${GROQ_API_KEY:-""}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-""}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WORKSPACE_ROOT: /app
     ports:
       - "8000:8000"
     volumes:
       - ./sandbox_runs:/app/sandbox_runs
+      - ./logs:/app/logs
 
 volumes:
   pgdata:

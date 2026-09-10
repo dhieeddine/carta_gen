@@ -1,0 +1,118 @@
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import unicodedata
+from scipy.spatial import cKDTree
+from shapely.vectorized import contains
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.patches import Patch
+import sqlalchemy
+import os
+
+# Connexion unique via SQLAlchemy
+engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+
+# 1. Charger les données pluviométriques
+query = """[requete_sql]"""
+df = pd.read_sql(query, engine)
+df.columns = df.columns.str.lower()
+
+# 2. Chargement des couches géographiques depuis PostGIS
+gdf_pays = gpd.read_postgis('SELECT geom FROM limite_pays_polygon', engine, geom_col='geom').to_crs('EPSG:32632')
+gdf_gouv = gpd.read_postgis('SELECT lib_fr, geom FROM gouvernorats', engine, geom_col='geom').to_crs('EPSG:32632')
+gdf_reg_all = gpd.read_postgis('SELECT lib_fr, lib_ar, code, geom FROM rgion_hydrographique', engine, geom_col='geom').to_crs('EPSG:32632')
+
+NOM_REG   = '[NOM_DE_LA_REGION]'
+target_col = '[colonne_cible]'
+titre_carte = f'Isohyetes — Region Hydrographique de {NOM_REG} (Tunisie)'
+
+# 3. Normalisation des accents pour la comparaison (ex: 'Sud' == 'sud')
+def normalize(s):
+    if s is None: return ''
+    return unicodedata.normalize('NFD', str(s)).encode('ascii', 'ignore').decode().lower().strip()
+
+gdf_cible = gdf_reg_all[gdf_reg_all['{self.reg_col}'].apply(normalize) == normalize(NOM_REG)].copy()
+if gdf_cible.empty:
+    raise ValueError(f'Region hydrographique {{NOM_REG}} non trouvee dans la table rgion_hydrographique')
+
+# 4. Nettoyage des données
+df = df.dropna(subset=[target_col])
+df = df.reset_index(drop=True)
+if df.empty:
+    raise ValueError(f"Aucune donnée disponible pour la colonne '{target_col}'")
+
+# 5. Filtrage spatial des stations dans la région hydrographique
+gdf_stations = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs="EPSG:32632")
+gdf_stations_reg = gpd.sjoin(gdf_stations, gdf_cible[['geometry']], how="inner", predicate="within")
+df_stations_cible = df.loc[df.index.isin(gdf_stations_reg.index)].copy()
+
+if df_stations_cible.empty:
+    # Fallback : 10 stations les plus proches du centroïde de la région
+    centroid = gdf_cible.geometry.unary_union.centroid
+    df['_dist'] = np.sqrt((df['x'] - centroid.x)**2 + (df['y'] - centroid.y)**2)
+    df_stations_cible = df.nsmallest(10, '_dist').drop(columns=['_dist'])
+
+# 6. Grille d'interpolation — zoomée sur la région
+g_bounds = gdf_cible.total_bounds
+margin = 15000
+x_min, y_min, x_max, y_max = g_bounds[0]-margin, g_bounds[1]-margin, g_bounds[2]+margin, g_bounds[3]+margin
+x_grid = np.arange(x_min, x_max, 1000)
+y_grid = np.arange(y_min, y_max, 1000)
+x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+grid_points = np.column_stack([x_mesh.ravel(), y_mesh.ravel()])
+
+coords_locales = df_stations_cible[['x', 'y']].values
+valeurs_locales = df_stations_cible[target_col].values
+tree = cKDTree(coords_locales)
+k_val = min(10, len(df_stations_cible))
+distances, indices = tree.query(grid_points, k=k_val)
+if k_val > 1:
+    distances = np.maximum(distances, 1e-10)
+    weights = 1.0 / (distances ** 2)
+    weights /= weights.sum(axis=1, keepdims=True)
+    z_1d = np.sum(weights * valeurs_locales[indices], axis=1)
+else:
+    z_1d = np.repeat(valeurs_locales[0], len(grid_points))
+
+geom_cible = gdf_cible.geometry.unary_union
+mask_1d = contains(geom_cible, grid_points[:, 0], grid_points[:, 1])
+z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)
+z_2d = np.ma.masked_invalid(z_2d)
+
+if target_col == 'total':
+    niveaux = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500]
+    labels  = ['<100 mm','100-200','200-300','300-400','400-500','500-600','600-800','800-1000','1000-1200','>1200 mm']
+elif target_col in ['auto', 'hiver', 'print', 'ete']:
+    niveaux = [0, 25, 50, 75, 100, 125, 188, 250, 375, 500, 750]
+    labels  = ['<25 mm','25-50','50-75','75-100','100-125','125-188','188-250','250-375','375-500','>500 mm']
+elif target_col in ['janv','fev','mar','avr','mai','juin','juil','aout','sept','octo','nove','dece']:
+    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]
+    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']
+else:
+    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]
+    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']
+couleurs = ['#ff0000','#8B4513','#F5DEB3','#FFFF00','#90EE90','#7CCD7C','#228B22','#0000FF','#8A2BE2','#4B0082']
+cmap = ListedColormap(couleurs)
+norm = BoundaryNorm(niveaux, cmap.N)
+
+fig, ax = plt.subplots(figsize=(9, 11))
+ax.set_aspect('equal')
+gdf_gouv.boundary.plot(ax=ax, color='lightgrey', linestyle='--', linewidth=0.6)
+gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)
+gdf_cible.boundary.plot(ax=ax, color='blue', linewidth=2.0)
+
+if not np.all(np.isnan(z_2d)):
+    ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.75, extend='max')
+    cl = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='black', linewidths=0.7)
+    ax.clabel(cl, inline=True, fontsize=8, fmt='%d mm')
+
+ax.scatter(df_stations_cible['x'], df_stations_cible['y'], s=25, color='red', edgecolor='black', zorder=5)
+legend_elements = [Patch(facecolor=c, label=l) for c, l in zip(couleurs, labels)]
+ax.legend(handles=legend_elements, title='Précipitations', loc='lower right', fontsize=8)
+ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
+ax.set_title(titre_carte, fontsize=14, fontweight='bold')
+ax.grid(True, linestyle='--', alpha=0.3)
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

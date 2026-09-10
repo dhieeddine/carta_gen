@@ -1,0 +1,52 @@
+import os
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from sqlalchemy import create_engine
+
+engine = create_engine(os.environ['DATABASE_URL'])
+
+# Charger gouvernorats avec région naturelle depuis PostGIS
+gdf_gov = gpd.read_postgis(
+    'SELECT lib_fr, region_naturelle, geom FROM gouvernorats',
+    engine, geom_col='geom'
+)
+
+# Mapping officiel DGRE : 6 régions naturelles
+REGION_COLORS = {
+    'Nord Ouest': '#1a9850',
+    'Nord Est':   '#66bd63',
+    'Centre Ouest': '#fee08b',
+    'Centre Est':   '#fdae61',
+    'Sud Ouest':    '#f46d43',
+    'Sud Est':      '#d73027',
+}
+
+fig, ax = plt.subplots(figsize=(10, 14))
+
+for region, color in REGION_COLORS.items():
+    subset = gdf_gov[gdf_gov['region_naturelle'] == region]
+    if not subset.empty:
+        subset.plot(ax=ax, color=color, edgecolor='black', linewidth=0.8)
+
+# Légende
+patches = [mpatches.Patch(color=c, label=r) for r, c in REGION_COLORS.items()]
+ax.legend(handles=patches, loc='lower left', fontsize=9,
+          title='Régions Naturelles', title_fontsize=10,
+          framealpha=0.9, edgecolor='black')
+
+# Labels gouvernorats
+for idx, row in gdf_gov.iterrows():
+    centroid = row['geom'].centroid
+    ax.annotate(row['lib_fr'], xy=(centroid.x, centroid.y),
+                fontsize=6, ha='center', va='center',
+                fontweight='bold', color='#222222',
+                bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.6, ec='none'))
+
+ax.set_title('Délimitation des 6 Régions Naturelles de la Tunisie',
+             fontsize=14, fontweight='bold', pad=15)
+ax.set_axis_off()
+ax.set_aspect('equal')
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

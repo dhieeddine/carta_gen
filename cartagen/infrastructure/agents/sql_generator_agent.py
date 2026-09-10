@@ -6,6 +6,20 @@ import json
 import requests
 from typing import Dict, Any, Tuple, Optional
 
+
+def _sanitize_sql_string(value: str) -> str:
+    """Échappe les caractères dangereux pour les valeurs injectées dans le SQL.
+    
+    Supprime les commentaires SQL (--), les caractères non alphanumériques,
+    et échappe les guillemets simples ('' standard SQL).
+    """
+    cleaned = re.sub(r"--+", "", value)
+    sanitized = re.sub(r"[^a-zA-ZÀ-ÿ0-9\s\-']", "", cleaned)
+    sanitized = sanitized.replace("'", "''")
+    return sanitized.strip()
+
+
+
 class SQLGeneratorAgent:
     """Agent chargé de traduire sémantiquement l'instruction en requête SQL via RAG Zvec et LLM."""
 
@@ -13,17 +27,14 @@ class SQLGeneratorAgent:
         self.gouv_col = gouv_col
         self.reg_col = reg_col
         self.provider_manager = provider_manager
-        
-        # Configuration des providers LLM
+        if self.provider_manager is None:
+            try:
+                from cartagen.infrastructure.providers.provider_manager import ProviderManager
+                self.provider_manager = ProviderManager(os.getcwd())
+            except Exception:
+                self.provider_manager = None
+
         self.llm_provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
-        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
-        self.ollama_url = os.getenv("OLLAMA_COLAB_URL", "http://localhost:11434")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
         self.last_system_prompt = ""
         self.last_user_prompt = ""
         self.last_response = "" 
@@ -161,103 +172,16 @@ class SQLGeneratorAgent:
         print(f"--- [USER PROMPT] ---\n{user_prompt}")
         print("="*80 + "\n")
 
-        # [Correction 3] Petits modèles locaux → ChatML pour un JSON strict
+        if not self.provider_manager:
+            raise RuntimeError("ProviderManager non configuré pour l'appel LLM de SQLGeneratorAgent.")
+
         small_model_providers = ["kaggle", "ollama", "colab", "local"]
         if self.llm_provider in small_model_providers:
             chatml_prompt = self._format_chatml(system_prompt, user_prompt)
-            if self.provider_manager:
-                try:
-                    return self.provider_manager.call_llm_api(self.llm_provider, chatml_prompt)
-                except Exception as e:
-                    print(f"[SQL Agent] Avertissement échec ProviderManager ({e}). Repli sur l'API directe.")
-            return self._call_ollama_api(chatml_prompt)
+            return self.provider_manager.call_llm_api(self.llm_provider, chatml_prompt)
 
-        # Cloud APIs (Groq, OpenRouter, OpenAI) → system/user séparés
-        if self.provider_manager:
-            try:
-                return self.provider_manager.call_llm_api(self.llm_provider, user_prompt, system_prompt)
-            except Exception as e:
-                print(f"[SQL Agent] Avertissement échec ProviderManager ({e}). Repli sur l'implémentation directe.")
+        return self.provider_manager.call_llm_api(self.llm_provider, user_prompt, system_prompt)
 
-        prompt = f"{system_prompt}\n\n{user_prompt}"
-        if self.llm_provider == "groq":
-            return self._call_groq_api(prompt)
-        elif self.llm_provider == "openai":
-            return self._call_openai_api(prompt)
-        elif self.llm_provider == "openrouter":
-            return self._call_openrouter_api(prompt)
-        else:
-            return self._call_openrouter_api(prompt)
-
-    def _call_groq_api(self, prompt: str) -> str:
-        if not self.groq_api_key:
-            raise ValueError("GROQ_API_KEY manquante.")
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {self.groq_api_key}", "Content-Type": "application/json"}
-        payload = {"model": self.groq_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.05}
-        res = requests.post(url, headers=headers, json=payload, timeout=20)
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"]
-
-    def _call_openai_api(self, prompt: str) -> str:
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY manquante.")
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {self.openai_api_key}", "Content-Type": "application/json"}
-        payload = {"model": self.openai_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.05}
-        res = requests.post(url, headers=headers, json=payload, timeout=20)
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"]
-
-    def _call_openrouter_api(self, prompt: str) -> str:
-        if not self.openrouter_api_key:
-            raise ValueError("OPENROUTER_API_KEY manquante.")
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.openrouter_api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/dhieeddine/Net2Terraform-WebInterface",
-            "X-Title": "CartaGen-SQL"
-        }
-        payload = {"model": self.openrouter_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.05}
-        res = requests.post(url, headers=headers, json=payload, timeout=20)
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"]
-
-    def _call_ollama_api(self, prompt: str) -> str:
-        base_url = self.ollama_url.rstrip("/")
-        headers = {
-            "ngrok-skip-browser-warning": "true",
-            "Bypass-Tunnel-Remainder": "true",
-            "User-Agent": "CartaGenAgent/1.0",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {"model": self.ollama_model, "prompt": prompt, "stream": False, "options": {"temperature": 0.05}}
-        
-        urls = [f"{base_url}/generate", f"{base_url}/api/generate", base_url]
-        last_err = None
-        for url in urls:
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=120)
-                if res.status_code == 404:
-                    continue
-                res.raise_for_status()
-                data = res.json()
-                if "response" in data:
-                    return data["response"]
-                elif "generated_text" in data:
-                    return data["generated_text"]
-                elif "text" in data:
-                    return data["text"]
-                elif "choices" in data:
-                    return data["choices"][0]["message"]["content"]
-                else:
-                    return str(data)
-            except Exception as e:
-                last_err = e
-        if last_err:
-            raise last_err
 
     def _clean_json_response(self, text: str) -> str:
         # Extraire le bloc JSON s'il est entouré de ```json ... ```
@@ -437,8 +361,12 @@ class SQLGeneratorAgent:
             if key_norm in low_norm:
                 if val == "Tunis" and is_national_scope:
                     continue
+                # val provient du dictionnaire interne (whitelist implicite) → safe
                 detected_gouv = val
                 break
+        # Sécurité : ne jamais utiliser une valeur hors whitelist
+        if detected_gouv and detected_gouv not in GOUVERNORATS_MAP.values():
+            detected_gouv = None
 
         # Région naturelle
         detected_region_govs = None
@@ -470,9 +398,11 @@ class SQLGeneratorAgent:
         # Filtrage gouvernorat/région
         def gouv_filter():
             if detected_gouv:
-                return f"AND s.gouvernorat ILIKE '%{detected_gouv}%'"
+                safe_gouv = _sanitize_sql_string(detected_gouv)
+                return f"AND s.gouvernorat ILIKE '%{safe_gouv}%'"
             if detected_region_govs:
-                arr = ", ".join(f"'%{g}%'" for g in detected_region_govs)
+                # Les régions sont issues du dictionnaire interne REGIONS_MAP (whitelist)
+                arr = ", ".join(f"'%{_sanitize_sql_string(g)}%'" for g in detected_region_govs)
                 return f"AND s.gouvernorat ILIKE ANY(ARRAY[{arr}])"
             return ""
 
@@ -483,7 +413,7 @@ class SQLGeneratorAgent:
         )
         entre_match = re.search(r'entre\s+(\d{4})\s+et\s+(\d{4})', low)
         if station_match and (entre_match or len(all_years) >= 2):
-            station_nom = station_match.group(1).strip()
+            station_nom = _sanitize_sql_string(station_match.group(1).strip())
             if entre_match:
                 y1, y2 = entre_match.group(1), entre_match.group(2)
                 yr_filter = f"AND EXTRACT(YEAR FROM p.date_obs) BETWEEN {y1} AND {y2}"
@@ -530,7 +460,7 @@ class SQLGeneratorAgent:
             gf = gouv_filter()
             yr_filter = f"AND EXTRACT(YEAR FROM p.date_obs)={first_year}" if first_year else ""
             yr_filter_stations = re.search(r'station\s+(?:de\s+)?([A-ZÀ-Ü][a-zà-ü]+(?:\s+[A-ZÀ-Ü][a-zà-ü]+)*)', prompt)
-            nom_filter = f"AND s.nom ILIKE '%{yr_filter_stations.group(1)}%'" if yr_filter_stations else ""
+            nom_filter = f"AND s.nom ILIKE '%{_sanitize_sql_string(yr_filter_stations.group(1))}%'" if yr_filter_stations else ""
             sql = (
                 f"{BASE_SELECT}{mois_cases}, SUM(p.valeur_mm) AS total "
                 f"{BASE_FROM} "

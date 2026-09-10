@@ -1,0 +1,97 @@
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree
+from shapely.vectorized import contains
+from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.patches import Patch
+import psycopg2
+import os
+
+conn = psycopg2.connect(os.environ['DATABASE_URL'])
+query = """[requete_sql]"""
+df = pd.read_sql(query, conn)
+conn.close()
+df.columns = df.columns.str.lower()
+
+# Chargement des couches géographiques depuis PostGIS
+import sqlalchemy
+engine = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+gdf_pays = gpd.read_postgis('SELECT geom FROM limite_pays_polygon', engine, geom_col='geom').to_crs('EPSG:32632')
+gdf_gouv_all = gpd.read_postgis('SELECT lib_fr, lib_ar, code, geom FROM gouvernorats', engine, geom_col='geom').to_crs('EPSG:32632')
+
+NOM_GOUV_1 = '[GOUVERNORAT_1]'
+NOM_GOUV_2 = '[GOUVERNORAT_2]'
+target_col  = '[colonne_cible]'
+titre_global = f'Comparaison isohyetes : {NOM_GOUV_1} vs {NOM_GOUV_2}'
+
+if target_col == 'total':
+    niveaux = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500]
+    labels  = ['<100 mm','100-200','200-300','300-400','400-500','500-600','600-800','800-1000','1000-1200','>1200 mm']
+elif target_col in ['auto', 'hiver', 'print', 'ete']:
+    niveaux = [0, 25, 50, 75, 100, 125, 188, 250, 375, 500, 750]
+    labels  = ['<25 mm','25-50','50-75','75-100','100-125','125-188','188-250','250-375','375-500','>500 mm']
+else:
+    niveaux = [0, 10, 20, 30, 40, 50, 75, 100, 150, 200, 300]
+    labels  = ['<10 mm','10-20','20-30','30-40','40-50','50-75','75-100','100-150','150-200','>200 mm']
+couleurs = ['#ff0000','#8B4513','#F5DEB3','#FFFF00','#90EE90','#7CCD7C','#228B22','#0000FF','#8A2BE2','#4B0082']
+cmap = ListedColormap(couleurs)
+norm = BoundaryNorm(niveaux, cmap.N)
+
+gdf_compare = gdf_gouv_all[gdf_gouv_all['{self.gouv_col}'].str.lower().isin([NOM_GOUV_1.lower(), NOM_GOUV_2.lower()])].copy()
+geom_cibles = gdf_compare.geometry.unary_union
+
+gdf_stations = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['x'], df['y']), crs="EPSG:32632")
+gdf_stations_gouv = gpd.sjoin(gdf_stations, gdf_gouv_all, how="inner", predicate="within")
+df_stations_compare = gdf_stations_gouv[gdf_stations_gouv['{self.gouv_col}'].str.lower().isin([NOM_GOUV_1.lower(), NOM_GOUV_2.lower()])].copy()
+
+if df_stations_compare.empty:
+    df_stations_compare = gdf_stations.copy()
+
+bounds = gdf_pays.total_bounds
+x_min, y_min, x_max, y_max = bounds
+margin = 20000
+x_min -= margin; x_max += margin; y_min -= margin; y_max += margin
+x_grid = np.arange(x_min, x_max, 2500)
+y_grid = np.arange(y_min, y_max, 2500)
+x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+grid_points = np.column_stack([x_mesh.ravel(), y_mesh.ravel()])
+
+coords_locales = df_stations_compare[['x', 'y']].values
+valeurs_locales = df_stations_compare[target_col].values
+tree = cKDTree(coords_locales)
+k_val = min(10, len(df_stations_compare))
+distances, indices = tree.query(grid_points, k=k_val)
+if k_val > 1:
+    distances = np.maximum(distances, 1e-10)
+    weights = 1.0 / (distances ** 2)
+    weights /= weights.sum(axis=1, keepdims=True)
+    z_1d = np.sum(weights * valeurs_locales[indices], axis=1)
+else:
+    z_1d = np.repeat(valeurs_locales[0], len(grid_points))
+
+mask_1d = contains(geom_cibles, grid_points[:, 0], grid_points[:, 1])
+z_2d = np.where(mask_1d, z_1d, np.nan).reshape(x_mesh.shape)
+z_2d = np.ma.masked_invalid(z_2d)
+
+fig, ax = plt.subplots(figsize=(9, 12))
+ax.set_aspect('equal')
+gdf_gouv_all.boundary.plot(ax=ax, color='lightgrey', linestyle='--', linewidth=0.6)
+gdf_pays.boundary.plot(ax=ax, color='black', linewidth=1.5)
+
+if not np.all(np.isnan(z_2d)):
+    cf = ax.contourf(x_mesh, y_mesh, z_2d, levels=niveaux, cmap=cmap, norm=norm, alpha=0.8, extend='max')
+    cl = ax.contour(x_mesh, y_mesh, z_2d, levels=niveaux, colors='black', linewidths=0.5)
+    ax.clabel(cl, inline=True, fontsize=7, fmt='%d mm')
+
+gdf_compare.boundary.plot(ax=ax, color='black', linewidth=1.8)
+ax.scatter(df_stations_compare['x'], df_stations_compare['y'], s=25, color='red', edgecolor='black', zorder=5)
+legend_elements = [Patch(facecolor=c, label=l) for c, l in zip(couleurs, labels)]
+ax.legend(handles=legend_elements, title='Précipitations', loc='lower right', fontsize=8)
+ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
+ax.set_title(titre_global, fontsize=14, fontweight='bold')
+ax.grid(True, linestyle='--', alpha=0.2)
+plt.tight_layout()
+plt.savefig('output_isohyete.png', dpi=300, bbox_inches='tight')
+plt.close()

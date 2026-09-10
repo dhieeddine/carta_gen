@@ -15,11 +15,14 @@ env/
 
 # Fichiers de Configuration / Secrets (CRITIQUE)
 .env
+providers_config.json
+
 # Base vectorielle locale et logs
 zvec_store/
 sandbox_runs/
+logs/
 *.log
-data/
+.pytest_cache/
 data*/
 # Dossiers d'images générées temporairement
 images_temp*/
@@ -38,7 +41,7 @@ annuaire_genere.*
 annuaire_*.tex
 annuaire_*.pdf
 rapport_*.md
-
+Journal de stage.txt
 
 # Éditeurs
 .vscode/
