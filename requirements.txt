@@ -10,6 +10,7 @@ requests>=2.31.0
 # Database Connectivity
 psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
+geoalchemy2
 
 # Geographic Information Systems (GIS) & Science
 numpy>=1.24.0
@@ -33,3 +34,4 @@ seaborn>=0.12.0
 zvec>=0.1.0
 sentence-transformers>=2.2.2
 pypdf>=3.17.0
+

@@ -1,0 +1,61 @@
+# Git & Documentation
+.git
+.gitignore
+*.md
+!README.md
+
+# Virtual Environments (DO NOT copy Windows/local venv into Linux container)
+venv/
+.venv/
+env/
+ENV/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Sensitive environment configuration
+.env
+providers_config.json
+
+# Heavy PDF files and temporary binaries
+*.pdf
+*.docx
+*.docx.bak
+Annuaire_National_*
+
+# Heavy data directories (MDB backups and cached PDFs)
+data/*.pdf
+data/cache/
+data/processed/
+data/raw/Beja_database/
+data/raw/yasra.xlsx
+
+# Generated output & runtime logs
+sandbox_runs/
+logs/
+*.log
+images_temp/
+images_temp_*/
+scratch/
+zvec_store/
+dataset_finetuning/
+lora_dataset_collector/
+autre_fichiers/
+
+# LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.toc
+*.synctex.gz
+
+# IDE
+.vscode/
+.idea/

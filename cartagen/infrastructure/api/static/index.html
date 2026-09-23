@@ -12,10 +12,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Styling principal -->
-    <link id="mainStylesheet" rel="stylesheet" href="/static/style.css?v=1.0.2">
+    <link id="mainStylesheet" rel="stylesheet" href="/static/style.css?v=1.0.3">
     <script>
         if (window.location.protocol === 'file:') {
-            document.getElementById('mainStylesheet').href = './style.css';
+            document.getElementById('mainStylesheet').href = './style.css?v=1.0.3';
         }
     </script>
 </head>
@@ -99,8 +99,8 @@
                     <button class="tab-btn" data-tab="agents-workflow">
                         <i class="fa-solid fa-robot"></i> Traces Agents
                     </button>
-                    <button class="tab-btn" data-tab="historique">
-                        <i class="fa-solid fa-history"></i> Historique
+                    <button class="tab-btn" data-tab="env-config">
+                        <i class="fa-solid fa-sliders"></i> Configuration .env
                     </button>
                     <button class="tab-btn" data-tab="annuaire-yearbook">
                         <i class="fa-solid fa-book"></i> Annuaire PDF
@@ -188,17 +188,259 @@
                     </div>
                 </div>
 
-                <!-- Onglet 4 : Historique des cartes -->
-                <div class="tab-content" id="historique">
-                    <div class="history-list-container">
-                        <h3>Historique des requêtes de cette session</h3>
-                        <p class="section-desc">Toutes les cartes générées restent accessibles ci-dessous.</p>
-                        <div class="history-grid" id="historyGrid">
-                            <div class="empty-history">
-                                <i class="fa-solid fa-folder-open"></i>
-                                <p>Aucun historique disponible pour le moment.</p>
+                <!-- Onglet Configuration .env -->
+                <div class="tab-content" id="env-config">
+                    <div class="env-config-container">
+                        <!-- En-tête de configuration -->
+                        <div class="env-header">
+                            <div>
+                                <h3 class="env-title">
+                                    <i class="fa-solid fa-sliders" style="color: var(--accent-color);"></i>
+                                    Configuration des Variables d'Environnement (.env)
+                                </h3>
+                                <p class="section-desc">
+                                    Gérez en direct les clés d'API, les modèles LLM, la connexion PostgreSQL et les paramètres globaux de CartaGen.
+                                </p>
+                            </div>
+                            <div class="env-actions">
+                                <button type="button" class="secondary-btn" id="reloadEnvBtn" title="Recharger depuis le fichier .env">
+                                    <i class="fa-solid fa-rotate"></i> Recharger
+                                </button>
+                                <button type="button" class="secondary-btn" id="testDbBtn" title="Tester la connexion PostgreSQL">
+                                    <i class="fa-solid fa-database"></i> Tester BDD
+                                </button>
+                                <button type="button" class="secondary-btn" id="testLlmBtn" title="Tester le Provider LLM Actif">
+                                    <i class="fa-solid fa-robot"></i> Tester LLM
+                                </button>
+                                <button type="button" class="primary-btn" id="saveEnvBtn">
+                                    <i class="fa-solid fa-floppy-disk"></i> Enregistrer tout
+                                </button>
                             </div>
                         </div>
+
+                        <!-- Toast / Alerte statut -->
+                        <div id="envStatusAlert" class="env-alert hidden"></div>
+
+                        <!-- Sélecteur de mode : Formulaire / Éditeur Brut -->
+                        <div class="env-mode-switch">
+                            <button type="button" class="mode-btn active" id="modeFormBtn">
+                                <i class="fa-solid fa-table-cells-large"></i> Mode Formulaire
+                            </button>
+                            <button type="button" class="mode-btn" id="modeRawBtn">
+                                <i class="fa-solid fa-file-code"></i> Mode Fichier Brut (.env)
+                            </button>
+                        </div>
+
+                        <!-- VUE 1 : FORMULAIRE INTERACTIF -->
+                        <div id="envFormView" class="env-view active">
+                            <div class="env-sections-grid">
+                                
+                                <!-- CARTE 1 : FOURNISSEUR LLM & HYPERPARAMÈTRES -->
+                                <div class="env-card">
+                                    <div class="env-card-header">
+                                        <h4><i class="fa-solid fa-brain"></i> Fournisseur LLM Actif & Paramètres</h4>
+                                        <span class="env-badge">Cœur IA</span>
+                                    </div>
+                                    <div class="env-card-body">
+                                        <div class="form-group">
+                                            <label for="env_LLM_PROVIDER">Fournisseur LLM Actif (LLM_PROVIDER) :</label>
+                                            <select id="env_LLM_PROVIDER" class="env-input">
+                                                <option value="colab">Google Colab (Fine-Tuned CartaGen_LoRA)</option>
+                                                <option value="openrouter">OpenRouter Cloud API</option>
+                                                <option value="groq">Groq Cloud API (Ultra-rapide Llama 3.3 70B)</option>
+                                                <option value="openai">OpenAI API (GPT-4o / GPT-4o-mini)</option>
+                                                <option value="kaggle">Kaggle GPU (Tunnel Ngrok)</option>
+                                                <option value="ollama">Ollama Local (localhost:11434)</option>
+                                                <option value="local">Modèle Local PyTorch (VisCoder2-7B)</option>
+                                            </select>
+                                            <small class="field-hint">Définit le moteur de génération utilisé par défaut pour SQL, SIG et RAG.</small>
+                                        </div>
+
+                                        <div class="form-row-2">
+                                            <div class="form-group">
+                                                <label for="env_TEMPERATURE">Température (TEMPERATURE) :</label>
+                                                <div style="display:flex; align-items:center; gap:10px;">
+                                                    <input type="range" id="env_TEMPERATURE" min="0" max="1" step="0.05" value="0.1" style="flex:1;">
+                                                    <span id="tempValueDisplay" style="font-weight:600; min-width:35px; color:var(--accent-color);">0.1</span>
+                                                </div>
+                                                <small class="field-hint">0 = Strict & déterministe, 1 = Créatif.</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_MAX_TOKENS">Tokens Max (MAX_TOKENS) :</label>
+                                                <input type="number" id="env_MAX_TOKENS" class="env-input" value="1024" min="256" max="8192" step="256">
+                                                <small class="field-hint">Longueur maximale de la réponse générée.</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CARTE 2 : CLÉS API & FOURNISSEURS CLOUD -->
+                                <div class="env-card">
+                                    <div class="env-card-header">
+                                        <h4><i class="fa-solid fa-cloud"></i> Fournisseurs Cloud & Clés API</h4>
+                                        <span class="env-badge">Cloud API</span>
+                                    </div>
+                                    <div class="env-card-body">
+                                        <!-- OpenRouter -->
+                                        <div class="form-group">
+                                            <label for="env_OPENROUTER_API_KEY">OpenRouter API Key :</label>
+                                            <div class="input-password-wrapper">
+                                                <input type="password" id="env_OPENROUTER_API_KEY" class="env-input password-field" placeholder="sk-or-v1-...">
+                                                <button type="button" class="toggle-pwd-btn" title="Afficher/Masquer"><i class="fa-solid fa-eye"></i></button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="env_OPENROUTER_MODEL">Modèle OpenRouter :</label>
+                                            <input type="text" id="env_OPENROUTER_MODEL" class="env-input" placeholder="meta-llama/llama-3.1-8b-instruct:free">
+                                        </div>
+
+                                        <!-- Groq -->
+                                        <div class="form-group">
+                                            <label for="env_GROQ_API_KEY">Groq Cloud API Key :</label>
+                                            <div class="input-password-wrapper">
+                                                <input type="password" id="env_GROQ_API_KEY" class="env-input password-field" placeholder="gsk_...">
+                                                <button type="button" class="toggle-pwd-btn" title="Afficher/Masquer"><i class="fa-solid fa-eye"></i></button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="env_GROQ_MODEL">Modèle Groq :</label>
+                                            <input type="text" id="env_GROQ_MODEL" class="env-input" placeholder="llama-3.3-70b-versatile">
+                                        </div>
+
+                                        <!-- OpenAI -->
+                                        <div class="form-group">
+                                            <label for="env_OPENAI_API_KEY">OpenAI API Key :</label>
+                                            <div class="input-password-wrapper">
+                                                <input type="password" id="env_OPENAI_API_KEY" class="env-input password-field" placeholder="sk-proj-...">
+                                                <button type="button" class="toggle-pwd-btn" title="Afficher/Masquer"><i class="fa-solid fa-eye"></i></button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="env_OPENAI_MODEL">Modèle OpenAI :</label>
+                                            <input type="text" id="env_OPENAI_MODEL" class="env-input" placeholder="gpt-4o-mini">
+                                        </div>
+
+                                        <!-- Hugging Face -->
+                                        <div class="form-group">
+                                            <label for="env_HF_TOKEN">Token Hugging Face (HF_TOKEN) :</label>
+                                            <div class="input-password-wrapper">
+                                                <input type="password" id="env_HF_TOKEN" class="env-input password-field" placeholder="hf_...">
+                                                <button type="button" class="toggle-pwd-btn" title="Afficher/Masquer"><i class="fa-solid fa-eye"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CARTE 3 : SERVEURS DISTANTS & TUNNELS GPU -->
+                                <div class="env-card">
+                                    <div class="env-card-header">
+                                        <h4><i class="fa-solid fa-server"></i> Serveurs GPU, Tunnels & Ollama</h4>
+                                        <span class="env-badge">Tunnel / GPU</span>
+                                    </div>
+                                    <div class="env-card-body">
+                                        <div class="form-group">
+                                            <label for="env_OLLAMA_COLAB_URL">URL du Tunnel Colab / Ngrok / Ollama (OLLAMA_COLAB_URL) :</label>
+                                            <input type="text" id="env_OLLAMA_COLAB_URL" class="env-input" placeholder="https://xxxx.ngrok-free.dev ou http://localhost:11434">
+                                            <small class="field-hint">Point d'entrée HTTP du serveur vLLM ou FastAPI hébergeant le modèle fine-tuné.</small>
+                                        </div>
+                                        <div class="form-row-2">
+                                            <div class="form-group">
+                                                <label for="env_COLAB_MODEL">Modèle Colab (COLAB_MODEL) :</label>
+                                                <input type="text" id="env_COLAB_MODEL" class="env-input" placeholder="CartaGen_LoRA_SQL_SIG">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_OLLAMA_MODEL">Modèle Ollama (OLLAMA_MODEL) :</label>
+                                                <input type="text" id="env_OLLAMA_MODEL" class="env-input" placeholder="CartaGen_LoRA_SQL_SIG">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CARTE 4 : BASE DE DONNÉES POSTGRESQL / POSTGIS -->
+                                <div class="env-card">
+                                    <div class="env-card-header">
+                                        <h4><i class="fa-solid fa-database"></i> Base de Données PostgreSQL & PostGIS</h4>
+                                        <span class="env-badge">Base Spatiale</span>
+                                    </div>
+                                    <div class="env-card-body">
+                                        <div class="form-row-2">
+                                            <div class="form-group">
+                                                <label for="env_DB_HOST">Hôte (DB_HOST) :</label>
+                                                <input type="text" id="env_DB_HOST" class="env-input" placeholder="localhost">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_DB_PORT">Port (DB_PORT) :</label>
+                                                <input type="number" id="env_DB_PORT" class="env-input" placeholder="5432">
+                                            </div>
+                                        </div>
+                                        <div class="form-row-2">
+                                            <div class="form-group">
+                                                <label for="env_DB_NAME">Nom de la BDD (DB_NAME) :</label>
+                                                <input type="text" id="env_DB_NAME" class="env-input" placeholder="dgre_db">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_DB_USER">Utilisateur (DB_USER) :</label>
+                                                <input type="text" id="env_DB_USER" class="env-input" placeholder="postgres">
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="env_DB_PASSWORD">Mot de passe BDD (DB_PASSWORD) :</label>
+                                            <div class="input-password-wrapper">
+                                                <input type="password" id="env_DB_PASSWORD" class="env-input password-field" placeholder="••••••••">
+                                                <button type="button" class="toggle-pwd-btn" title="Afficher/Masquer"><i class="fa-solid fa-eye"></i></button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="env_DATABASE_URL">URL de Connexion Complète (DATABASE_URL) :</label>
+                                            <input type="text" id="env_DATABASE_URL" class="env-input" placeholder="postgresql://postgres:password@localhost:5432/dgre_db">
+                                            <small class="field-hint">Utilisée directement par SQLAlchemy et GeoPandas.</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CARTE 5 : CACHE & REDIS -->
+                                <div class="env-card">
+                                    <div class="env-card-header">
+                                        <h4><i class="fa-solid fa-bolt"></i> Cache & Performances (Redis)</h4>
+                                        <span class="env-badge">Performance</span>
+                                    </div>
+                                    <div class="env-card-body">
+                                        <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0;">
+                                            <div>
+                                                <label for="env_CACHE_ENABLED" style="margin:0; cursor:pointer;">Activer le Cache (CACHE_ENABLED) :</label>
+                                                <small class="field-hint" style="display:block;">Stocke les requêtes SQL et cartes répétitives.</small>
+                                            </div>
+                                            <input type="checkbox" id="env_CACHE_ENABLED" style="width:20px; height:20px; cursor:pointer;">
+                                        </div>
+                                        <div class="form-row-3">
+                                            <div class="form-group">
+                                                <label for="env_CACHE_TTL">Durée TTL (s) :</label>
+                                                <input type="number" id="env_CACHE_TTL" class="env-input" placeholder="3600">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_REDIS_HOST">Hôte Redis :</label>
+                                                <input type="text" id="env_REDIS_HOST" class="env-input" placeholder="localhost">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="env_REDIS_PORT">Port Redis :</label>
+                                                <input type="number" id="env_REDIS_PORT" class="env-input" placeholder="6379">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <!-- VUE 2 : ÉDITEUR BRUT (TEXTE BRUT .ENV) -->
+                        <div id="envRawView" class="env-view">
+                            <div class="raw-editor-header">
+                                <span><i class="fa-solid fa-code"></i> Fichier .env brut sur le disque</span>
+                                <span style="font-size:12px; color:var(--text-muted);">Toutes les lignes et commentaires seront conservés</span>
+                            </div>
+                            <textarea id="envRawTextarea" spellcheck="false" placeholder="# Contenu de votre fichier .env..."></textarea>
+                        </div>
+
                     </div>
                 </div>
 
@@ -385,9 +627,9 @@
     <!-- Script de logique -->
     <script>
         if (window.location.protocol === 'file:') {
-            document.write('<script src="./app.js?v=1.2.1"><\/script>');
+            document.write('<script src="./app.js?v=1.2.3"><\/script>');
         } else {
-            document.write('<script src="/static/app.js?v=1.2.1"><\/script>');
+            document.write('<script src="/static/app.js?v=1.2.3"><\/script>');
         }
     </script>
 </body>

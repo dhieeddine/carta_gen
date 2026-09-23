@@ -56,7 +56,10 @@ class CartaGenOrchestrator:
         
         from dotenv import load_dotenv
         import os as _os
+        saved_db_url = _os.environ.get("DATABASE_URL")
         load_dotenv(dotenv_path=_os.path.join(self.sandbox.workspace_root, ".env"), override=True)
+        if saved_db_url:
+            _os.environ["DATABASE_URL"] = saved_db_url
         
         env_provider = _os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
         active_provider = llm_provider.lower().strip() if llm_provider else env_provider

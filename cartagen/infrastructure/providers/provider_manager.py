@@ -18,7 +18,10 @@ class ProviderManager:
 
     def _load_providers(self):
         """Charge les providers depuis .env et le fichier JSON persistant."""
+        saved_db_url = os.environ.get("DATABASE_URL")
         load_dotenv(os.path.join(self.workspace_root, ".env"), override=True)
+        if saved_db_url:
+            os.environ["DATABASE_URL"] = saved_db_url
         # 1. Configs par défaut issues du .env
         default_providers = {
             "colab": {
@@ -108,7 +111,10 @@ class ProviderManager:
 
     def get_providers_list(self) -> List[Dict[str, Any]]:
         """Retourne la liste complète des providers sous forme structurée pour le Frontend."""
+        saved_db_url = os.environ.get("DATABASE_URL")
         load_dotenv(os.path.join(self.workspace_root, ".env"), override=True)
+        if saved_db_url:
+            os.environ["DATABASE_URL"] = saved_db_url
         self._load_providers()
         result = []
         # Lire le provider par défaut DEPUIS .env (défaut sur colab)
@@ -172,9 +178,9 @@ class ProviderManager:
 
         return config
 
-    def call_llm_api(self, provider_id: str, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Méthode unifiée d'appel LLM pour n'importe quel provider (Cloud, Colab, Kaggle, Ollama)."""
-        pid = provider_id.lower()
+    def _call_single_provider(self, provider_id: str, prompt: str, system_prompt: Optional[str] = None) -> str:
+        """Exécute l'appel LLM pour un provider spécifique sans gestion du fallback."""
+        pid = provider_id.lower().strip()
         pinfo = self.providers.get(pid, self.providers.get("openrouter", {}))
 
         exec_type = pinfo.get("exec_type", "api_key").lower()
@@ -182,10 +188,10 @@ class ProviderManager:
         endpoint_url = pinfo.get("endpoint_url", "").strip()
         api_key = pinfo.get("api_key", "").strip()
 
-        print("\n" + "╔" + "═"*78 + "╗")
-        print(f"║ [ProviderManager -> Envoi LLM] Provider: {pinfo.get('name', pid)} ({exec_type.upper()})")
-        print(f"║ Endpoint: {endpoint_url or 'Défaut API Cloud'} | Modèle: {model_name}")
-        print("╚" + "═"*78 + "╝")
+        print("\n" + "+------------------------------------------------------------------------------+")
+        print(f"| [ProviderManager -> Envoi LLM] Provider: {pinfo.get('name', pid)} ({exec_type.upper()})")
+        print(f"| Endpoint: {endpoint_url or 'Defaut API Cloud'} | Modele: {model_name}")
+        print("+------------------------------------------------------------------------------+")
 
         # Headers HTTP universels avec déblocage Ngrok/Bypass
         headers = {
@@ -220,6 +226,9 @@ class ProviderManager:
             if api_key and "Authorization" not in headers:
                 headers["Authorization"] = f"Bearer {api_key}"
 
+            if not api_key and exec_type in ["openrouter", "groq", "openai"]:
+                raise ValueError(f"Cle d'API manquante pour le provider '{pid}'")
+
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
@@ -231,7 +240,7 @@ class ProviderManager:
                 "temperature": 0.05
             }
 
-            res = requests.post(endpoint_url, headers=headers, json=payload, timeout=120)
+            res = requests.post(endpoint_url, headers=headers, json=payload, timeout=35)
             res.raise_for_status()
             data = res.json()
             return data["choices"][0]["message"]["content"]
@@ -239,6 +248,8 @@ class ProviderManager:
         # Format 2 : API Ollama / Colab / Kaggle / Tunnel (Tolérance multi-routes /generate & /api/generate)
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         url_base = endpoint_url.rstrip("/")
+        if not url_base:
+            raise ValueError(f"URL d'endpoint vide pour le provider '{pid}'")
 
         candidates = []
         if exec_type == "kaggle" or "ngrok" in url_base or "localtunnel" in url_base:
@@ -270,7 +281,8 @@ class ProviderManager:
             }
 
             try:
-                res = requests.post(candidate_url, headers=headers, json=payload, timeout=180)
+                # Timeout de 15s pour eviter de bloquer l'application si le tunnel ne repond pas
+                res = requests.post(candidate_url, headers=headers, json=payload, timeout=15)
                 if res.status_code == 404:
                     continue
                 res.raise_for_status()
@@ -278,7 +290,7 @@ class ProviderManager:
                 try:
                     data = res.json()
                 except Exception as json_err:
-                    print(f"[ProviderManager] Erreur décodage JSON sur {candidate_url}: {json_err}. Réponse brute: {res.text[:150]}")
+                    print(f"[ProviderManager] Erreur decodage JSON sur {candidate_url}: {json_err}. Reponse brute: {res.text[:150]}")
                     continue
 
                 if "response" in data:
@@ -298,3 +310,70 @@ class ProviderManager:
 
         if last_error:
             raise last_error
+        raise RuntimeError(f"Aucune reponse valide recue de '{pid}' sur l'endpoint {url_base}")
+
+    def call_llm_api(self, provider_id: str, prompt: str, system_prompt: Optional[str] = None, fallback_on_error: bool = True) -> str:
+        """
+        Méthode unifiée d'appel LLM avec mécanisme de basculement automatique (Fallback)
+        si le premier provider demandé est indisponible (erreur réseau, 500, clé invalide, etc.).
+        """
+        pid = (provider_id or "openrouter").lower().strip()
+        self.last_used_provider = pid
+        self.last_fallback_info = None
+
+        # 1. Tentative avec le provider principal demandé
+        try:
+            res = self._call_single_provider(pid, prompt, system_prompt)
+            return res
+        except Exception as primary_err:
+            print(f"[ProviderManager] [WARN] Le provider principal '{pid}' est indisponible: {primary_err}")
+            if not fallback_on_error:
+                raise primary_err
+
+        # 2. Liste ordonnée de providers de secours (fallback)
+        fallback_candidates = ["openrouter", "groq", "openai", "colab", "kaggle", "ollama"]
+        tried = [pid]
+        
+        for cand in fallback_candidates:
+            if cand in tried:
+                continue
+            tried.append(cand)
+
+            cand_info = self.providers.get(cand, {})
+            exec_type = cand_info.get("exec_type", "").lower()
+            
+            # Verifier les prerequis de base pour ce provider candidat
+            if exec_type in ["openrouter", "groq", "openai"]:
+                api_key = cand_info.get("api_key", "").strip()
+                if cand == "openrouter" and not api_key:
+                    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+                elif cand == "groq" and not api_key:
+                    api_key = os.getenv("GROQ_API_KEY", "").strip()
+                elif cand == "openai" and not api_key:
+                    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+                if not api_key:
+                    continue
+            elif exec_type in ["colab", "kaggle", "ollama"]:
+                endpoint_url = cand_info.get("endpoint_url", "").strip()
+                if not endpoint_url:
+                    endpoint_url = os.getenv("OLLAMA_COLAB_URL", "").strip()
+                if not endpoint_url:
+                    continue
+
+            print(f"[ProviderManager] [FALLBACK] Tentative de basculement automatique vers '{cand}'...")
+            try:
+                res = self._call_single_provider(cand, prompt, system_prompt)
+                print(f"[ProviderManager] [SUCCESS] Basculement reussi vers le provider de secours '{cand}' !")
+                self.last_used_provider = cand
+                self.last_fallback_info = {
+                    "original_provider": pid,
+                    "fallback_provider": cand,
+                    "reason": str(primary_err)
+                }
+                return res
+            except Exception as cand_err:
+                print(f"[ProviderManager] [FAIL] Le provider candidat '{cand}' a egalement echoue: {cand_err}")
+
+        # Si tous les candidats ont échoué
+        raise RuntimeError(f"Tous les providers LLM disponibles ont echoue. Provider initial: '{pid}' ({primary_err})")
+

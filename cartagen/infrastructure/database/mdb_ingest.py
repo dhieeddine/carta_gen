@@ -128,9 +128,9 @@ class MdbIngestionService:
             print(f"[MDB Ingest] Info vérification des tables PostgreSQL : {repr(e)}")
 
     def _open_mdb(self, mdb_path: str):
-        drivers = [d for d in pyodbc.drivers() if 'access' in d.lower()]
+        drivers = [d for d in pyodbc.drivers() if any(k in d.lower() for k in ['access', 'mdb', 'microsoft'])]
         if not drivers:
-            raise RuntimeError("Aucun pilote ODBC Microsoft Access ('Microsoft Access Driver (*.mdb, *.accdb)') n'est installé sur cette machine.")
+            raise RuntimeError("Aucun pilote ODBC Microsoft Access / MDB Tools n'est installé sur cette machine.")
         driver = drivers[0]
         conn_str = (
             f"Driver={{{driver}}};"
@@ -142,6 +142,39 @@ class MdbIngestionService:
     def _get_mdb_tables(self, mdb_conn) -> List[str]:
         cursor = mdb_conn.cursor()
         return [row.table_name for row in cursor.tables(tableType="TABLE")]
+
+    def _extract_pluies_cli(self, mdb_path: str, date_debut: Optional[datetime] = None) -> List[tuple]:
+        """Fallback via l'outil système mdbtools (mdb-tables, mdb-export) pour Linux/Docker sans pilote ODBC."""
+        import subprocess
+        import io
+        import pandas as pd
+
+        output = subprocess.check_output(["mdb-tables", "-1", mdb_path], text=True, errors="replace")
+        tables = [t.strip() for t in output.strip().split("\n") if t.strip()]
+        p_table = next((t for t in tables if t.lower() in ["pluies", "pluie", "pluviometrie", "donnees_pluies", "pluies_base"]), None)
+        if not p_table:
+            return []
+
+        csv_data = subprocess.check_output(["mdb-export", mdb_path, p_table], text=True, errors="replace")
+        df = pd.read_csv(io.StringIO(csv_data))
+        cols = list(df.columns)
+        id_col = next((c for c in cols if c.lower() in ["id_station", "code_st", "num_poste", "idstation", "code"]), cols[0])
+        dt_col = next((c for c in cols if c.lower() in ["date", "date_obs", "horodatage", "date_mesure"]), cols[1] if len(cols) > 1 else cols[0])
+        val_col = next((c for c in cols if c.lower() in ["valeur", "valeur_mm", "hauteur", "pluie_mm", "p_mm", "pluie"]), cols[2] if len(cols) > 2 else cols[0])
+
+        df[dt_col] = pd.to_datetime(df[dt_col], errors='coerce')
+        if date_debut:
+            df = df[df[dt_col] >= pd.to_datetime(date_debut)]
+
+        raw_tuples = []
+        for _, row in df.iterrows():
+            if pd.notna(row[dt_col]):
+                raw_tuples.append((
+                    str(row[id_col] or ""),
+                    row[dt_col].to_pydatetime() if hasattr(row[dt_col], 'to_pydatetime') else row[dt_col],
+                    self._safe_float(row[val_col])
+                ))
+        return raw_tuples
 
     def _safe_float(self, val):
         try:
@@ -173,35 +206,38 @@ class MdbIngestionService:
         }
 
         try:
-            mdb_conn = self._open_mdb(mdb_path)
-            tables = self._get_mdb_tables(mdb_conn)
+            raw_tuples = []
+            try:
+                mdb_conn = self._open_mdb(mdb_path)
+                tables = self._get_mdb_tables(mdb_conn)
 
-            # Extraction EXCLUSIVE de la table des Pluies (pluies, pluie, pluviometrie, etc.)
-            p_rows = []
-            p_table = next((t for t in tables if t.lower() in ["pluies", "pluie", "pluviometrie", "donnees_pluies", "pluies_base"]), None)
-            if p_table:
-                cur = mdb_conn.cursor()
-                cur.execute(f"SELECT * FROM {p_table} WHERE 1=0")
-                cols = [desc[0] for desc in cur.description]
-                id_col = next((c for c in cols if c.lower() in ["id_station", "code_st", "num_poste", "idstation", "code"]), cols[0])
-                dt_col = next((c for c in cols if c.lower() in ["date", "date_obs", "horodatage", "date_mesure"]), cols[1] if len(cols) > 1 else cols[0])
-                val_col = next((c for c in cols if c.lower() in ["valeur", "valeur_mm", "hauteur", "pluie_mm", "p_mm", "pluie"]), cols[2] if len(cols) > 2 else cols[0])
-                
-                try:
-                    cur.execute(f"SELECT {id_col}, {dt_col}, {val_col} FROM {p_table} WHERE {dt_col} >= ?", (date_debut,))
-                except Exception:
-                    cur.execute(f"SELECT {id_col}, {dt_col}, {val_col} FROM {p_table}")
+                # Extraction EXCLUSIVE de la table des Pluies (pluies, pluie, pluviometrie, etc.)
+                p_table = next((t for t in tables if t.lower() in ["pluies", "pluie", "pluviometrie", "donnees_pluies", "pluies_base"]), None)
+                if p_table:
+                    cur = mdb_conn.cursor()
+                    cur.execute(f"SELECT * FROM {p_table} WHERE 1=0")
+                    cols = [desc[0] for desc in cur.description]
+                    id_col = next((c for c in cols if c.lower() in ["id_station", "code_st", "num_poste", "idstation", "code"]), cols[0])
+                    dt_col = next((c for c in cols if c.lower() in ["date", "date_obs", "horodatage", "date_mesure"]), cols[1] if len(cols) > 1 else cols[0])
+                    val_col = next((c for c in cols if c.lower() in ["valeur", "valeur_mm", "hauteur", "pluie_mm", "p_mm", "pluie"]), cols[2] if len(cols) > 2 else cols[0])
+                    
+                    try:
+                        cur.execute(f"SELECT {id_col}, {dt_col}, {val_col} FROM {p_table} WHERE {dt_col} >= ?", (date_debut,))
+                    except Exception:
+                        cur.execute(f"SELECT {id_col}, {dt_col}, {val_col} FROM {p_table}")
 
-                raw_tuples = []
-                for row in cur.fetchall():
-                    if row[1] is not None:
-                        raw_tuples.append((
-                            str(row[0] or ""),
-                            row[1],
-                            self._safe_float(row[2])
-                        ))
+                    for row in cur.fetchall():
+                        if row[1] is not None:
+                            raw_tuples.append((
+                                str(row[0] or ""),
+                                row[1],
+                                self._safe_float(row[2])
+                            ))
 
-            mdb_conn.close()
+                mdb_conn.close()
+            except Exception as odbc_err:
+                print(f"[MDB Ingest] PyODBC indisponible ({odbc_err}), tentative avec mdbtools CLI...")
+                raw_tuples = self._extract_pluies_cli(mdb_path, date_debut)
 
             # Auto-détection du gouvernorat :
             # 1. Via l'ID de la première station dans ann_stations

@@ -76,8 +76,19 @@ annuaire_rag_agent = AnnuaireRAGAgent(
     orchestrator=orchestrator
 )
 
-# Monter le répertoire des fichiers statiques pour le frontend
+# Monter les répertoires des fichiers statiques et des figures
 app.mount("/static", StaticFiles(directory=os.path.join(WORKSPACE_ROOT, "cartagen", "infrastructure", "api", "static")), name="static")
+if os.path.exists(os.path.join(WORKSPACE_ROOT, "figures")):
+    app.mount("/figures", StaticFiles(directory=os.path.join(WORKSPACE_ROOT, "figures")), name="figures")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialisation automatique des tables spatiales PostGIS au démarrage."""
+    try:
+        print("[Startup] Vérification et ingestion automatique des shapefiles PostGIS...")
+        shapefile_service.ingest_shapefiles()
+    except Exception as e:
+        print(f"[Startup] Note shapefiles : {e}")
 
 # Registre en mémoire pour suivre l'état des requêtes
 task_registry: Dict[str, Dict[str, Any]] = {}
@@ -97,6 +108,17 @@ class ProviderConfigPayload(BaseModel):
     endpoint_url: Optional[str] = ""
     api_key: Optional[str] = ""
     description: Optional[str] = ""
+
+class EnvConfigPayload(BaseModel):
+    variables: Optional[Dict[str, Any]] = None
+    raw: Optional[str] = None
+
+class DbTestPayload(BaseModel):
+    database_url: Optional[str] = None
+
+class LlmTestPayload(BaseModel):
+    provider: Optional[str] = None
+    prompt: Optional[str] = "Reponds uniquement: OK"
 
 class YearbookPayload(BaseModel):
     year: int
@@ -165,8 +187,11 @@ def run_async_generation(request: MapRequest, selected_provider: Optional[str] =
     task_registry[task_id]["status"] = "processing"
     
     # Recharger .env à chaque exécution pour refléter les modifications en cours de session
+    saved_db_url = os.environ.get("DATABASE_URL")
     from dotenv import load_dotenv
     load_dotenv(dotenv_path=os.path.join(WORKSPACE_ROOT, ".env"), override=True)
+    if saved_db_url:
+        os.environ["DATABASE_URL"] = saved_db_url
     
     # Le provider vient : 1) du choix explicite frontend, 2) sinon du .env (LLM_PROVIDER)
     env_provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
@@ -252,6 +277,131 @@ async def add_provider(payload: ProviderConfigPayload):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/api/v1/config/env")
+async def get_env_config():
+    """Lit et renvoie les variables actuelles du fichier .env ainsi que son contenu brut."""
+    import dotenv
+    env_path = os.path.join(WORKSPACE_ROOT, ".env")
+    if not os.path.exists(env_path):
+        return {"status": "warning", "variables": {}, "raw": ""}
+    
+    vals = dotenv.dotenv_values(env_path)
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+    except Exception:
+        raw_content = ""
+
+    return {
+        "status": "success",
+        "variables": {k: v for k, v in vals.items() if v is not None},
+        "raw": raw_content,
+        "env_path": env_path
+    }
+
+@app.post("/api/v1/config/env")
+async def save_env_config(payload: EnvConfigPayload):
+    """Met à jour le fichier .env, recharge l'environnement et synchronise les providers."""
+    import dotenv
+    env_path = os.path.join(WORKSPACE_ROOT, ".env")
+    
+    try:
+        if payload.raw is not None and payload.raw.strip():
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(payload.raw)
+        elif payload.variables is not None:
+            if not os.path.exists(env_path):
+                open(env_path, "w", encoding="utf-8").close()
+            for key, value in payload.variables.items():
+                if key and key.strip():
+                    val_str = "" if value is None else str(value).strip()
+                    quote = '"' if (" " in val_str or "\n" in val_str or "#" in val_str) else ''
+                    dotenv.set_key(env_path, key.strip(), val_str, quote_mode="always" if quote else "none")
+                    
+        # Recharger l'environnement applicatif
+        load_dotenv(env_path, override=True)
+        if hasattr(orchestrator, "provider_manager"):
+            orchestrator.provider_manager._load_providers()
+        if hasattr(annuaire_rag_agent, "provider_manager"):
+            annuaire_rag_agent.provider_manager._load_providers()
+
+        # Re-lire pour confirmer
+        vals = dotenv.dotenv_values(env_path)
+        with open(env_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+
+        return {
+            "status": "success",
+            "message": "Fichier .env mis à jour et rechargé avec succès !",
+            "variables": {k: v for k, v in vals.items() if v is not None},
+            "raw": raw_content
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la sauvegarde du .env : {str(e)}")
+
+@app.post("/api/v1/config/test-db")
+async def test_db_connection(payload: Optional[DbTestPayload] = None):
+    """Teste la connexion à la base de données PostgreSQL / PostGIS."""
+    import time
+    from sqlalchemy import create_engine, text
+    
+    db_url = (payload.database_url if payload and payload.database_url else os.getenv("DATABASE_URL", "")).strip()
+    if not db_url:
+        return {"success": False, "error": "Aucune URL de base de données (DATABASE_URL) configurée."}
+    
+    t0 = time.time()
+    try:
+        engine = create_engine(db_url, connect_args={"connect_timeout": 5})
+        with engine.connect() as conn:
+            ver = conn.execute(text("SELECT version();")).scalar()
+            tables = conn.execute(text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")).scalar()
+            postgis_ver = None
+            try:
+                postgis_ver = conn.execute(text("SELECT PostGIS_Version();")).scalar()
+            except Exception:
+                postgis_ver = "Non installée ou non détectée"
+                
+        latency = round((time.time() - t0) * 1000)
+        return {
+            "success": True,
+            "message": "Connexion à PostgreSQL réussie !",
+            "version": ver.split(",")[0] if ver else "PostgreSQL",
+            "tables_count": tables,
+            "postgis_version": postgis_ver,
+            "latency_ms": latency
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "latency_ms": round((time.time() - t0) * 1000)
+        }
+
+@app.post("/api/v1/config/test-llm")
+async def test_llm_provider(payload: Optional[LlmTestPayload] = None):
+    """Teste la disponibilité d'un provider LLM en direct."""
+    import time
+    provider = payload.provider if payload and payload.provider else os.getenv("LLM_PROVIDER", "openrouter")
+    prompt = payload.prompt if payload and payload.prompt else "Reponds uniquement par le mot: OK"
+    
+    t0 = time.time()
+    try:
+        res = orchestrator.provider_manager._call_single_provider(provider, prompt, None)
+        latency = round((time.time() - t0) * 1000)
+        return {
+            "success": True,
+            "provider": provider,
+            "response": res.strip(),
+            "latency_ms": latency
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "provider": provider,
+            "error": str(e),
+            "latency_ms": round((time.time() - t0) * 1000)
+        }
+
 @app.get("/api/v1/maps/status/{request_id}")
 async def get_map_status(request_id: str):
     """Récupère l'état d'avancement et les résultats d'une demande."""
@@ -295,34 +445,48 @@ async def get_map_status(request_id: str):
 
 @app.get("/api/v1/maps/image/{filename}")
 async def get_map_image(filename: str):
-    """Sert l'image de la carte d'isohyètes générée par la Sandbox."""
+    """Sert l'image de la carte d'isohyètes générée par la Sandbox ou issue de l'annuaire."""
     safe_filename = os.path.basename(filename)
+    
+    # 1. Vérifier dans sandbox_runs
     sandbox_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "sandbox_runs"))
     image_path = os.path.abspath(os.path.join(sandbox_dir, safe_filename))
-    
-    if not image_path.startswith(sandbox_dir) or not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="Image de carte non trouvée.")
+    if image_path.startswith(sandbox_dir) and os.path.exists(image_path):
+        return FileResponse(image_path, media_type="image/png")
         
-    return FileResponse(image_path, media_type="image/png")
+    # 2. Vérifier dans figures/
+    fig_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "figures"))
+    fig_path = os.path.abspath(os.path.join(fig_dir, safe_filename))
+    if fig_path.startswith(fig_dir) and os.path.exists(fig_path):
+        return FileResponse(fig_path, media_type="image/png")
+        
+    # 3. Vérifier dans les dossiers images_temp
+    for folder in ["images_temp_national_2020", "images_temp", "images_temp_all_2020"]:
+        cand_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, folder))
+        cand_path = os.path.abspath(os.path.join(cand_dir, safe_filename))
+        if cand_path.startswith(cand_dir) and os.path.exists(cand_path):
+            return FileResponse(cand_path, media_type="image/png")
+            
+    raise HTTPException(status_code=404, detail="Image de carte non trouvée.")
 
 @app.get("/api/v1/annuaire/image/{folder_name}/{filename}")
 async def get_annuaire_image(folder_name: str, filename: str):
     """Sert les images de cartes/statistiques générées pour l'annuaire."""
-    if not re.match(r"^images_temp_[a-zA-Z0-9_]+$", folder_name):
-        raise HTTPException(status_code=400, detail="Nom de dossier invalide.")
-        
     safe_filename = os.path.basename(filename)
     base_folder = os.path.abspath(os.path.join(WORKSPACE_ROOT, folder_name))
     image_path = os.path.abspath(os.path.join(base_folder, safe_filename))
     
-    if not image_path.startswith(base_folder) or not os.path.exists(image_path):
-        fallback_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "images_temp"))
+    if image_path.startswith(base_folder) and os.path.exists(image_path):
+        return FileResponse(image_path, media_type="image/png")
+        
+    # Fallbacks multiples dans d'autres répertoires d'annuaire et figures
+    for fallback_dir_name in ["images_temp_national_2020", "figures", "images_temp", "images_temp_all_2020"]:
+        fallback_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, fallback_dir_name))
         fallback_path = os.path.abspath(os.path.join(fallback_dir, safe_filename))
         if fallback_path.startswith(fallback_dir) and os.path.exists(fallback_path):
             return FileResponse(fallback_path, media_type="image/png")
-        raise HTTPException(status_code=404, detail="Image de l'annuaire non trouvée.")
-        
-    return FileResponse(image_path, media_type="image/png")
+            
+    raise HTTPException(status_code=404, detail="Image de l'annuaire non trouvée.")
 
 
 
@@ -443,8 +607,11 @@ async def chat_annuaire(payload: AnnuaireChatPayload, background_tasks: Backgrou
     
     def run_async_chat():
         try:
+            saved_db_url = os.environ.get("DATABASE_URL")
             from dotenv import load_dotenv
             load_dotenv(dotenv_path=os.path.join(WORKSPACE_ROOT, ".env"), override=True)
+            if saved_db_url:
+                os.environ["DATABASE_URL"] = saved_db_url
 
             env_provider = os.getenv("LLM_PROVIDER", "openrouter").lower().strip()
             active_provider = payload.llm_provider.lower().strip() if payload.llm_provider else env_provider

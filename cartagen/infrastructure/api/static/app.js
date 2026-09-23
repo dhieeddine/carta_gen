@@ -1009,7 +1009,11 @@ document.addEventListener("DOMContentLoaded", () => {
                                 downloadBtn.href = firstImage;
                                 downloadBtn.classList.remove("hidden");
                             }
-                            if (tabBtns && tabBtns.length > 0) {
+                            // Basculer directement sur l'onglet Rendu de la carte
+                            const renduBtn = document.querySelector('.tab-btn[data-tab="visualisation"]');
+                            if (renduBtn) {
+                                renduBtn.click();
+                            } else if (tabBtns && tabBtns.length > 0) {
                                 tabBtns[0].click();
                             }
                         }
@@ -1053,4 +1057,260 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         };
     }
+
+    // ============================================================
+    // GESTION DE LA CONFIGURATION DES VARIABLES .ENV
+    // ============================================================
+    const envStatusAlert = document.getElementById("envStatusAlert");
+    const modeFormBtn = document.getElementById("modeFormBtn");
+    const modeRawBtn = document.getElementById("modeRawBtn");
+    const envFormView = document.getElementById("envFormView");
+    const envRawView = document.getElementById("envRawView");
+    const envRawTextarea = document.getElementById("envRawTextarea");
+    const saveEnvBtn = document.getElementById("saveEnvBtn");
+    const reloadEnvBtn = document.getElementById("reloadEnvBtn");
+    const testDbBtn = document.getElementById("testDbBtn");
+    const testLlmBtn = document.getElementById("testLlmBtn");
+    const envTempSlider = document.getElementById("env_TEMPERATURE");
+    const tempValueDisplay = document.getElementById("tempValueDisplay");
+
+    function showEnvAlert(message, type = "success", duration = 6000) {
+        if (!envStatusAlert) return;
+        envStatusAlert.className = `env-alert ${type}`;
+        const icon = type === "success" ? "fa-circle-check" : (type === "error" ? "fa-circle-exclamation" : "fa-triangle-exclamation");
+        envStatusAlert.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+        envStatusAlert.classList.remove("hidden");
+        if (duration > 0) {
+            setTimeout(() => {
+                envStatusAlert.classList.add("hidden");
+            }, duration);
+        }
+    }
+
+    if (envTempSlider && tempValueDisplay) {
+        envTempSlider.addEventListener("input", () => {
+            tempValueDisplay.textContent = envTempSlider.value;
+        });
+    }
+
+    // Bascule entre Formulaire et Éditeur Brut
+    if (modeFormBtn && modeRawBtn && envFormView && envRawView) {
+        modeFormBtn.addEventListener("click", () => {
+            modeFormBtn.classList.add("active");
+            modeRawBtn.classList.remove("active");
+            envFormView.classList.add("active");
+            envRawView.classList.remove("active");
+        });
+        modeRawBtn.addEventListener("click", () => {
+            modeRawBtn.classList.add("active");
+            modeFormBtn.classList.remove("active");
+            envRawView.classList.add("active");
+            envFormView.classList.remove("active");
+        });
+    }
+
+    // Bascule visibilité mot de passe
+    document.querySelectorAll(".toggle-pwd-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const input = btn.parentElement.querySelector("input");
+            const icon = btn.querySelector("i");
+            if (input.type === "password") {
+                input.type = "text";
+                icon.className = "fa-solid fa-eye-slash";
+            } else {
+                input.type = "password";
+                icon.className = "fa-solid fa-eye";
+            }
+        });
+    });
+
+    // Charger les variables depuis l'API
+    async function loadEnvConfig() {
+        try {
+            const res = await fetch("/api/v1/config/env");
+            if (!res.ok) throw new Error("Impossible de lire la configuration .env");
+            const data = await res.json();
+            const vars = data.variables || {};
+
+            // Remplissage des champs du formulaire
+            const mapFields = [
+                "LLM_PROVIDER", "TEMPERATURE", "MAX_TOKENS",
+                "OPENROUTER_API_KEY", "OPENROUTER_MODEL",
+                "GROQ_API_KEY", "GROQ_MODEL",
+                "OPENAI_API_KEY", "OPENAI_MODEL",
+                "HF_TOKEN", "OLLAMA_COLAB_URL", "OLLAMA_MODEL", "COLAB_MODEL",
+                "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "DATABASE_URL",
+                "CACHE_TTL", "REDIS_HOST", "REDIS_PORT"
+            ];
+
+            mapFields.forEach(field => {
+                const el = document.getElementById(`env_${field}`);
+                if (el && vars[field] !== undefined) {
+                    el.value = vars[field];
+                    if (field === "TEMPERATURE" && tempValueDisplay) {
+                        tempValueDisplay.textContent = vars[field];
+                    }
+                }
+            });
+
+            // Checkbox Cache
+            const cacheCheckbox = document.getElementById("env_CACHE_ENABLED");
+            if (cacheCheckbox && vars["CACHE_ENABLED"] !== undefined) {
+                cacheCheckbox.checked = String(vars["CACHE_ENABLED"]).toLowerCase() === "true";
+            }
+
+            // Éditeur brut
+            if (envRawTextarea) {
+                envRawTextarea.value = data.raw || "";
+            }
+        } catch (err) {
+            console.error("Erreur chargement .env :", err);
+            showEnvAlert(`Erreur de chargement des paramètres : ${err.message}`, "error");
+        }
+    }
+
+    // Sauvegarder les modifications
+    async function saveEnvConfig() {
+        if (!saveEnvBtn) return;
+        const originalHtml = saveEnvBtn.innerHTML;
+        saveEnvBtn.disabled = true;
+        saveEnvBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enregistrement...';
+
+        try {
+            const isRawMode = envRawView && envRawView.classList.contains("active");
+            let payload = {};
+
+            if (isRawMode) {
+                payload = { raw: envRawTextarea ? envRawTextarea.value : "" };
+            } else {
+                const variables = {};
+                const textFields = [
+                    "LLM_PROVIDER", "TEMPERATURE", "MAX_TOKENS",
+                    "OPENROUTER_API_KEY", "OPENROUTER_MODEL",
+                    "GROQ_API_KEY", "GROQ_MODEL",
+                    "OPENAI_API_KEY", "OPENAI_MODEL",
+                    "HF_TOKEN", "OLLAMA_COLAB_URL", "OLLAMA_MODEL", "COLAB_MODEL",
+                    "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "DATABASE_URL",
+                    "CACHE_TTL", "REDIS_HOST", "REDIS_PORT"
+                ];
+
+                textFields.forEach(field => {
+                    const el = document.getElementById(`env_${field}`);
+                    if (el) variables[field] = el.value.trim();
+                });
+
+                const cacheCheckbox = document.getElementById("env_CACHE_ENABLED");
+                if (cacheCheckbox) {
+                    variables["CACHE_ENABLED"] = cacheCheckbox.checked ? "true" : "false";
+                }
+
+                // Si les champs individuels de BDD sont modifiés, reconstruire DATABASE_URL
+                if (variables["DB_USER"] && variables["DB_PASSWORD"] && variables["DB_HOST"] && variables["DB_PORT"] && variables["DB_NAME"]) {
+                    const autoUrl = `postgresql://${variables["DB_USER"]}:${variables["DB_PASSWORD"]}@${variables["DB_HOST"]}:${variables["DB_PORT"]}/${variables["DB_NAME"]}`;
+                    if (!variables["DATABASE_URL"] || variables["DATABASE_URL"].includes("@")) {
+                        variables["DATABASE_URL"] = autoUrl;
+                        const dbUrlEl = document.getElementById("env_DATABASE_URL");
+                        if (dbUrlEl) dbUrlEl.value = autoUrl;
+                    }
+                }
+
+                payload = { variables };
+            }
+
+            const res = await fetch("/api/v1/config/env", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.detail || "Échec de sauvegarde.");
+
+            showEnvAlert("✅ Fichier .env enregistré et environnement applicatif rechargé avec succès !", "success");
+            if (result.raw && envRawTextarea) {
+                envRawTextarea.value = result.raw;
+            }
+        } catch (err) {
+            console.error("Erreur sauvegarde .env :", err);
+            showEnvAlert(`❌ Erreur lors de la sauvegarde : ${err.message}`, "error");
+        } finally {
+            saveEnvBtn.disabled = false;
+            saveEnvBtn.innerHTML = originalHtml;
+        }
+    }
+
+    // Tester la connexion PostgreSQL
+    async function testDbConnection() {
+        if (!testDbBtn) return;
+        const originalHtml = testDbBtn.innerHTML;
+        testDbBtn.disabled = true;
+        testDbBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Test BDD...';
+
+        try {
+            const dbUrlEl = document.getElementById("env_DATABASE_URL");
+            const dbUrl = dbUrlEl ? dbUrlEl.value.trim() : "";
+            const res = await fetch("/api/v1/config/test-db", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ database_url: dbUrl })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showEnvAlert(`✅ Connexion PostgreSQL réussie ! (${data.version}, ${data.tables_count} tables, latence: ${data.latency_ms}ms)`, "success", 8000);
+            } else {
+                showEnvAlert(`❌ Échec de connexion PostgreSQL : ${data.error}`, "error", 10000);
+            }
+        } catch (err) {
+            showEnvAlert(`❌ Erreur requête test BDD : ${err.message}`, "error");
+        } finally {
+            testDbBtn.disabled = false;
+            testDbBtn.innerHTML = originalHtml;
+        }
+    }
+
+    // Tester le Provider LLM
+    async function testLlmProvider() {
+        if (!testLlmBtn) return;
+        const originalHtml = testLlmBtn.innerHTML;
+        testLlmBtn.disabled = true;
+        testLlmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Test LLM...';
+
+        try {
+            const providerEl = document.getElementById("env_LLM_PROVIDER");
+            const provider = providerEl ? providerEl.value : "";
+            const res = await fetch("/api/v1/config/test-llm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ provider, prompt: "Reponds uniquement par le mot: OK" })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showEnvAlert(`✅ Provider '${data.provider}' opérationnel ! Réponse : "${data.response}" (${data.latency_ms}ms)`, "success", 8000);
+            } else {
+                showEnvAlert(`❌ Provider '${data.provider}' indisponible : ${data.error}`, "error", 10000);
+            }
+        } catch (err) {
+            showEnvAlert(`❌ Erreur requête test LLM : ${err.message}`, "error");
+        } finally {
+            testLlmBtn.disabled = false;
+            testLlmBtn.innerHTML = originalHtml;
+        }
+    }
+
+    if (saveEnvBtn) saveEnvBtn.addEventListener("click", saveEnvConfig);
+    if (reloadEnvBtn) reloadEnvBtn.addEventListener("click", loadEnvConfig);
+    if (testDbBtn) testDbBtn.addEventListener("click", testDbConnection);
+    if (testLlmBtn) testLlmBtn.addEventListener("click", testLlmProvider);
+
+    // Déclenchement automatique du chargement quand on clique sur l'onglet
+    const envTabBtn = document.querySelector('.tab-btn[data-tab="env-config"]');
+    if (envTabBtn) {
+        envTabBtn.addEventListener("click", () => {
+            loadEnvConfig();
+        });
+    }
+
+    // Chargement initial
+    loadEnvConfig();
 });
+
