@@ -186,6 +186,10 @@ class ProviderManager:
         exec_type = pinfo.get("exec_type", "api_key").lower()
         model_name = pinfo.get("model", "llama3")
         endpoint_url = pinfo.get("endpoint_url", "").strip()
+        in_docker = os.getenv("IN_DOCKER", "false").lower() in ("true", "1") or os.path.exists("/.dockerenv")
+        if in_docker and endpoint_url:
+            endpoint_url = endpoint_url.replace("://localhost", "://host.docker.internal").replace("://127.0.0.1", "://host.docker.internal")
+
         api_key = pinfo.get("api_key", "").strip()
 
         print("\n" + "+------------------------------------------------------------------------------+")
@@ -213,7 +217,7 @@ class ProviderManager:
             if pid == "groq" or exec_type == "groq":
                 endpoint_url = "https://api.groq.com/openai/v1/chat/completions"
                 api_key = api_key or os.getenv("GROQ_API_KEY", "")
-                model_name = model_name if model_name and "llama" in model_name.lower() else os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+                model_name = model_name or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
             elif pid == "openai" or exec_type == "openai":
                 endpoint_url = "https://api.openai.com/v1/chat/completions"
                 api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -320,12 +324,14 @@ class ProviderManager:
         pid = (provider_id or "openrouter").lower().strip()
         self.last_used_provider = pid
         self.last_fallback_info = None
+        primary_error_msg = ""
 
         # 1. Tentative avec le provider principal demandé
         try:
             res = self._call_single_provider(pid, prompt, system_prompt)
             return res
         except Exception as primary_err:
+            primary_error_msg = str(primary_err)
             print(f"[ProviderManager] [WARN] Le provider principal '{pid}' est indisponible: {primary_err}")
             if not fallback_on_error:
                 raise primary_err
@@ -368,12 +374,12 @@ class ProviderManager:
                 self.last_fallback_info = {
                     "original_provider": pid,
                     "fallback_provider": cand,
-                    "reason": str(primary_err)
+                    "reason": primary_error_msg
                 }
                 return res
             except Exception as cand_err:
                 print(f"[ProviderManager] [FAIL] Le provider candidat '{cand}' a egalement echoue: {cand_err}")
 
         # Si tous les candidats ont échoué
-        raise RuntimeError(f"Tous les providers LLM disponibles ont echoue. Provider initial: '{pid}' ({primary_err})")
+        raise RuntimeError(f"Tous les providers LLM disponibles ont echoue. Provider initial: '{pid}' ({primary_error_msg})")
 

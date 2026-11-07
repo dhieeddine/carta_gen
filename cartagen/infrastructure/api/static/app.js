@@ -1,97 +1,61 @@
 // ============================================================
-// LOGIQUE APPLICATIVE FRONTEND — CARTAGEN
+// LOGIQUE APPLICATIVE FRONTEND — CARTAGEN (DGRE TUNISIE)
 // ============================================================
 
-document.addEventListener("DOMContentLoaded", () => {
-    // Éléments du DOM
-    const promptInput = document.getElementById("promptInput");
-    const generateBtn = document.getElementById("generateBtn");
-    const spinner = generateBtn ? generateBtn.querySelector(".spinner") : null;
-    const btnIcon = generateBtn ? generateBtn.querySelector(".btn-icon") : null;
-    const btnText = generateBtn ? generateBtn.querySelector(".btn-text") : null;
-    const suggestChips = document.querySelectorAll(".suggest-chip");
-
+// 1. Fonctions globales de Journalisation et Statut (Robustes & Universelles)
+function addLog(message, type = "system") {
+    console.log(`[CartaGen ${type.toUpperCase()}]`, message);
     const consoleLogs = document.getElementById("consoleLogs");
-    const statusIndicator = document.getElementById("statusIndicator");
+    if (!consoleLogs) return;
+    const time = new Date().toLocaleTimeString();
+    const line = document.createElement("div");
+    line.className = `log-line ${type}`;
+    line.innerHTML = `<span style="color: var(--text-muted)">[${time}]</span> ${message}`;
+    consoleLogs.appendChild(line);
+    consoleLogs.scrollTop = consoleLogs.scrollHeight;
+}
 
+function setStatus(status, text) {
+    const statusIndicator = document.getElementById("statusIndicator");
+    if (!statusIndicator) return;
+    statusIndicator.className = `indicator ${status}`;
+    statusIndicator.textContent = text;
+}
+
+// 2. Gestion de la Navigation par Onglets (Actifs & Cliquables)
+function initTabs() {
     const tabBtns = document.querySelectorAll(".tab-btn");
     const tabContents = document.querySelectorAll(".tab-content");
 
-    const mapPlaceholder = document.getElementById("mapPlaceholder");
-    const mapImage = document.getElementById("mapImage");
-    const downloadBtn = document.getElementById("downloadBtn");
-
-    const pythonCodeDisplay = document.getElementById("pythonCodeDisplay");
-    const sqlQueryDisplay = document.getElementById("sqlQueryDisplay");
-    const workflowAgentsDisplay = document.getElementById("workflowAgentsDisplay");
-
-    const copyCodeBtn = document.getElementById("copyCodeBtn");
-    const copySqlBtn = document.getElementById("copySqlBtn");
-
-    const historyGrid = document.getElementById("historyGrid");
-
-    const tableDataDisplay = document.getElementById("tableDataDisplay");
-    const copyTableBtn = document.getElementById("copyTableBtn");
-
-    // Données de session locales
-    let activeTaskId = null;
-    let pollingInterval = null;
-    const history = [];
-
-    // ============================================================
-    // GESTION DES ONGLETS
-    // ============================================================
     tabBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            const tabId = btn.getAttribute("data-tab");
+            if (!tabId) return;
+
+            // Retirer l'état actif de tous les onglets
             tabBtns.forEach(b => b.classList.remove("active"));
             tabContents.forEach(c => c.classList.remove("active"));
 
+            // Activer l'onglet cliqué et son contenu correspondant
             btn.classList.add("active");
-            const tabId = btn.getAttribute("data-tab");
             const targetContent = document.getElementById(tabId);
             if (targetContent) {
                 targetContent.classList.add("active");
             }
+
+            // Déclencheur spécifique pour le chargement .env
+            if (tabId === "env-config" && typeof loadEnvConfig === "function") {
+                loadEnvConfig();
+            }
         });
     });
+}
 
-    // ============================================================
-    // UTILS : AJOUT DE LOGS ET GESTION STATUTS
-    // ============================================================
-    function addLog(message, type = "system") {
-        if (!consoleLogs) return; // sidebar removed
-        const time = new Date().toLocaleTimeString();
-        const line = document.createElement("div");
-        line.className = `log-line ${type}`;
-        line.innerHTML = `<span style="color: var(--text-muted)">[${time}]</span> ${message}`;
-        consoleLogs.appendChild(line);
-        consoleLogs.scrollTop = consoleLogs.scrollHeight;
-    }
-
-    function setStatus(status, text) {
-        if (!statusIndicator) return; // sidebar removed
-        statusIndicator.className = `indicator ${status}`;
-        statusIndicator.textContent = text;
-    }
-
-    if (window.location.protocol === 'file:') {
-        addLog("⚠️ ATTENTION : Vous avez ouvert la page en fichier local (file://). Pour exécuter les requêtes IA et générer les annuaires, lancez 'python run_app.py' et ouvrez http://localhost:8000", "error");
-    }
-
-    // ============================================================
-    // SUGGESTIONS RAPIDES
-    // ============================================================
-    // Suggestions rapides (sidebar supprimée — guard null)
-    suggestChips.forEach(chip => {
-        chip.addEventListener("click", () => {
-            if (promptInput) { promptInput.value = chip.textContent; promptInput.focus(); }
-        });
-    });
-
-    // ============================================================
-    // PRESSE-PAPIERS
-    // ============================================================
+// 3. Gestion du Presse-papiers (Code Python et Tableau de Données)
+function initClipboard() {
     function copyTextToClipboard(text, btnElement) {
+        if (!text || !btnElement) return;
         navigator.clipboard.writeText(text).then(() => {
             const originalHTML = btnElement.innerHTML;
             btnElement.innerHTML = '<i class="fa-solid fa-check"></i> Copié !';
@@ -100,23 +64,25 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnElement.innerHTML = originalHTML;
                 btnElement.style.backgroundColor = "";
             }, 2000);
+        }).catch(err => {
+            console.error("Erreur de copie presse-papiers:", err);
         });
     }
 
-    if (copyCodeBtn) {
-        copyCodeBtn.addEventListener("click", () => {
+    const copyCodeBtn = document.getElementById("copyCodeBtn");
+    const pythonCodeDisplay = document.getElementById("pythonCodeDisplay");
+    if (copyCodeBtn && pythonCodeDisplay) {
+        copyCodeBtn.addEventListener("click", (e) => {
+            e.preventDefault();
             copyTextToClipboard(pythonCodeDisplay.textContent, copyCodeBtn);
         });
     }
 
-    if (copySqlBtn && sqlQueryDisplay) {
-        copySqlBtn.addEventListener("click", () => {
-            copyTextToClipboard(sqlQueryDisplay.textContent, copySqlBtn);
-        });
-    }
-
-    if (copyTableBtn) {
-        copyTableBtn.addEventListener("click", () => {
+    const copyTableBtn = document.getElementById("copyTableBtn");
+    const tableDataDisplay = document.getElementById("tableDataDisplay");
+    if (copyTableBtn && tableDataDisplay) {
+        copyTableBtn.addEventListener("click", (e) => {
+            e.preventDefault();
             const table = tableDataDisplay.querySelector("table");
             if (!table) return;
 
@@ -133,318 +99,155 @@ document.addEventListener("DOMContentLoaded", () => {
             copyTextToClipboard(csv.join("\n"), copyTableBtn);
         });
     }
+}
 
-    // ============================================================
-    // GESTION DES REQUÊTES ASYNCHRONES (POLLING)
-    // ============================================================
-    async function submitPrompt() {
-        const prompt = promptInput.value.trim();
-        if (!prompt) {
-            addLog("⚠️ Veuillez saisir une consigne avant de valider.", "failed");
-            return;
-        }
 
-        // Désactiver l'interface
-        if (generateBtn) generateBtn.disabled = true;
-        if (promptInput) promptInput.disabled = true;
-        if (spinner) spinner.classList.remove("hidden");
-        if (btnIcon) btnIcon.classList.add("hidden");
-        if (btnText) btnText.textContent = "Analyse en cours...";
+// ============================================================
+// GESTION DU MODULE ANNUAIRE (BIMODAL PDF & WORD DOCX)
+// ============================================================
 
-        const providerSelect = document.getElementById("llmProviderSelect");
-        const selectedProvider = providerSelect ? providerSelect.value : "openrouter";
+function resetYearbookUI() {
+    const generateYearbookBtn = document.getElementById("generateYearbookBtn");
+    const yearbookSpinner = generateYearbookBtn ? generateYearbookBtn.querySelector(".yearbook-spinner") : null;
+    if (generateYearbookBtn) generateYearbookBtn.disabled = false;
+    if (yearbookSpinner) yearbookSpinner.classList.add("hidden");
+}
 
-        // Nettoyage console et onglets
-        if (consoleLogs) consoleLogs.innerHTML = "";
-        if (workflowAgentsDisplay) {
-            workflowAgentsDisplay.innerHTML = `
-            <div class="placeholder-view" id="workflowPlaceholder" style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
-                <i class="fa-solid fa-sync fa-spin" style="font-size: 40px; margin-bottom: 15px; color: var(--primary-color);"></i>
-                <p style="margin: 0; font-size: 14px;">Analyse en cours... Les traces d'exécution des agents vont s'afficher d'un instant à l'autre.</p>
-            </div>`;
-        }
-        addLog(`🔮 Requête soumise : "${prompt}" (Modèle/Provider: ${selectedProvider})`);
-        setStatus("running", "Initialisation");
-
-        // Fermer un ancien polling
-        if (pollingInterval) clearInterval(pollingInterval);
-
+function pollYearbookStatus(taskId, year, gouvText, requestedFormat) {
+    const isUserDocx = (requestedFormat || "").toLowerCase() === "docx";
+    const interval = setInterval(async () => {
         try {
-            const response = await fetch("/api/v1/maps/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    prompt: prompt,
-                    llm_provider: selectedProvider,
-                    use_rag: isRagEnabled
-                })
-            });
-
+            const response = await fetch(`/api/v1/maps/status/${taskId}`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const data = await response.json();
-            activeTaskId = data.request_id;
-            addLog(`✅ Requête acceptée par l'API. ID de tâche : ${activeTaskId}`);
-            addLog(`🤖 Lancement de la chaîne d'agents...`, "running");
 
-            // Lancer le polling de statut
-            startPolling(activeTaskId, prompt);
-        } catch (error) {
-            addLog(`❌ Impossible de soumettre la requête : ${error.message}`, "failed");
-            resetUI();
-            setStatus("failed", "Échec");
-        }
-    }
+            if (data.status === "completed") {
+                clearInterval(interval);
+                resetYearbookUI();
+                setStatus("success", "Succès");
 
-    function startPolling(taskId, prompt) {
-        let elapsed = 0;
-        let lastLoggedStatus = "";
+                // Un document n'est DOCX que si le backend a reellement confirme le format docx
+                const hasRealDocx = (data.format === "docx") && (data.docx_url || (data.file_url && data.file_url.endsWith(".docx")));
+                const isFinalDocx = hasRealDocx || (data.file_url && data.file_url.endsWith(".docx"));
+                const formatLabel = isFinalDocx ? "Word (.docx)" : "PDF (.pdf)";
 
-        pollingInterval = setInterval(async () => {
-            elapsed += 1.5;
-            try {
-                const response = await fetch(`/api/v1/maps/status/${taskId}`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                const data = await response.json();
-
-                // Mettre à jour les Traces Agents en temps réel pendant le traitement
-                if (data.agent_traces) {
-                    renderAgentTraces(data.agent_traces);
+                if (yearbookResultTitle) {
+                    yearbookResultTitle.textContent = `${gouvText} — ${year}-${year + 1}`;
                 }
 
-                // Logging intelligent
-                if (data.status === "processing" && lastLoggedStatus !== "processing") {
-                    addLog("📊 [SQL Agent] Extraction des données de PostgreSQL en cours...", "running");
-                    addLog("🤖 [SIG Agent] Écriture et mise en forme du code spatial (VisCoder)...", "running");
-                    lastLoggedStatus = "processing";
-                    setStatus("running", "Calculs");
-                }
-
-                if (data.status === "completed") {
-                    clearInterval(pollingInterval);
-                    setStatus("success", "Succès");
-                    addLog(`🎉 Succès global en ${data.execution_time.toFixed(2)} secondes !`, "success");
-                    addLog("🎨 [Quality Agent] Le code s'est exécuté sans erreur dans la Sandbox.");
-                    addLog("🗺️ Carte générée et prête pour l'affichage.");
-
-                    // Rendu de la carte
-                    displayMapResults(data);
-
-                    // Ajouter à l'historique de session
-                    addToHistory(taskId, prompt, data.image_url);
-                    resetUI();
-                } else if (data.status === "failed") {
-                    clearInterval(pollingInterval);
-                    setStatus("failed", "Échec");
-                    addLog(`❌ Échec de génération des agents : ${data.error}`, "failed");
-
-                    // Affichage du code défectueux dans l'onglet Python
-                    if (data.code) {
-                        pythonCodeDisplay.textContent = data.code;
-                        addLog("📜 Le code ayant échoué a été injecté dans l'onglet Code Python pour analyse.");
-                    }
-                    resetUI();
-                }
-            } catch (error) {
-                addLog(`⚠️ Erreur lors du polling : ${error.message}`, "failed");
-            }
-        }, 1500);
-    }
-
-    function resetUI() {
-        if (generateBtn) generateBtn.disabled = false;
-        if (promptInput) promptInput.disabled = false;
-        if (spinner) spinner.classList.add("hidden");
-        if (btnIcon) btnIcon.classList.remove("hidden");
-        if (btnText) btnText.textContent = "Générer la Carte";
-    }
-
-    if (generateBtn) {
-        generateBtn.onclick = function(e) {
-            if (e) e.preventDefault();
-            submitPrompt();
-        };
-    }
-
-    if (promptInput) {
-        promptInput.onkeydown = function(e) {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submitPrompt();
-            }
-        };
-    }
-
-    // Résolution robuste des URLs d'images (convertit chemins disque locaux en URLs API)
-    function resolveImageUrl(url) {
-        if (!url) return "";
-        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/")) {
-            return url;
-        }
-        const filename = url.split(/[/\\]/).pop();
-        return `/api/v1/maps/image/${filename}`;
-    }
-
-    // Rendu graphique des onglets
-    function displayMapResults(data) {
-        // Rendu de l'image
-        if (data.image_url) {
-            const safeUrl = resolveImageUrl(data.image_url);
-            mapPlaceholder.classList.add("hidden");
-            mapImage.src = safeUrl;
-            mapImage.classList.remove("hidden");
-            downloadBtn.href = safeUrl;
-            downloadBtn.classList.remove("hidden");
-        } else {
-            mapImage.classList.add("hidden");
-            downloadBtn.classList.add("hidden");
-            mapPlaceholder.classList.remove("hidden");
-        }
-
-        // Rendu du tableau
-        if (data.table_html) {
-            tableDataDisplay.innerHTML = data.table_html;
-            copyTableBtn.classList.remove("hidden");
-        } else {
-            tableDataDisplay.innerHTML = `
-                <div class="placeholder-view" id="tablePlaceholder">
-                    <i class="fa-solid fa-table placeholder-icon"></i>
-                    <h2>Aucune donnée disponible</h2>
-                    <p>Saisissez une consigne demandant un tableau ou une analyse statistique.</p>
-                </div>`;
-            copyTableBtn.classList.add("hidden");
-        }
-
-        // Code Python
-        pythonCodeDisplay.textContent = data.code;
-
-        // Requête SQL
-        sqlQueryDisplay.textContent = data.sql || "-- Aucune requête SQL requise.";
-
-        // Traces des agents
-        if (data.agent_traces) {
-            renderAgentTraces(data.agent_traces);
-        }
-
-        // Basculer automatiquement sur l'onglet de la carte ou du tableau
-        if (data.table_html && !data.image_url) {
-            // Basculer vers l'onglet Tableau (index 1)
-            tabBtns[1].click();
-        } else {
-            // Basculer vers l'onglet Rendu (index 0)
-            tabBtns[0].click();
-        }
-    }
-
-    // ============================================================
-    // GESTION DE L'HISTORIQUE DE SESSION
-    // ============================================================
-    function addToHistory(id, prompt, imageUrl) {
-        // Éviter les doublons
-        if (history.some(item => item.id === id)) return;
-
-        const date = new Date().toLocaleTimeString();
-        history.unshift({ id, prompt, imageUrl, date });
-        updateHistoryUI();
-    }
-
-    function updateHistoryUI() {
-        if (history.length === 0) {
-            historyGrid.innerHTML = `
-                <div class="empty-history">
-                    <i class="fa-solid fa-folder-open"></i>
-                    <p>Aucun historique disponible pour le moment.</p>
-                </div>`;
-            return;
-        }
-
-        historyGrid.innerHTML = "";
-        history.forEach(item => {
-            const card = document.createElement("div");
-            card.className = "history-card";
-            card.innerHTML = `
-                <div class="history-card-header">
-                    <span>${item.date}</span>
-                    <i class="fa-solid fa-chevron-right" style="color: var(--accent-color)"></i>
-                </div>
-                <div class="history-prompt">${item.prompt}</div>
-                <div class="history-footer">
-                    <span>ID: ${item.id.substring(0, 8)}...</span>
-                </div>
-            `;
-
-            // Recharger la carte de l'historique sur un clic
-            card.addEventListener("click", async () => {
-                addLog(`🔄 Chargement de l'historique : "${item.prompt}"`);
-                try {
-                    const response = await fetch(`/api/v1/maps/status/${item.id}`);
-                    if (response.ok) {
-                        const data = await response.json();
-                        displayMapResults(data);
-                        addLog("✅ Carte historique chargée.");
+                if (yearbookResultDesc) {
+                    if (isUserDocx && !isFinalDocx) {
+                        yearbookResultDesc.textContent = `La version Word n'a pu être finalisée, la version PDF complète est prête au téléchargement ci-dessous.`;
                     } else {
-                        addLog("❌ Impossible de recharger la carte historique.", "failed");
+                        yearbookResultDesc.textContent = `Le document a été généré avec succès en format ${formatLabel}.`;
                     }
-                } catch (err) {
-                    addLog(`❌ Erreur : ${err.message}`, "failed");
                 }
-            });
 
-            historyGrid.appendChild(card);
-        });
-    }
+                if (yearbookResultIcon) {
+                    if (isFinalDocx) {
+                        yearbookResultIcon.className = "fa-solid fa-file-word pdf-large-icon";
+                        yearbookResultIcon.style.color = "#2b579a";
+                    } else {
+                        yearbookResultIcon.className = "fa-solid fa-file-pdf pdf-large-icon";
+                        yearbookResultIcon.style.color = "#e74c3c";
+                    }
+                }
 
-    if (generateBtn) generateBtn.addEventListener("click", submitPrompt);
+                // Liens de telechargement
+                const primaryUrl = isFinalDocx ? (data.docx_url || data.file_url) : (data.pdf_url || data.file_url);
 
-    if (promptInput) {
-        promptInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submitPrompt();
+                if (downloadYearbookLink && primaryUrl) {
+                    downloadYearbookLink.href = primaryUrl;
+                    downloadYearbookLink.setAttribute("download", `Annuaire_${gouvText}_${year}_${year+1}.${isFinalDocx ? "docx" : "pdf"}`);
+                }
+
+                if (downloadYearbookText) {
+                    downloadYearbookText.textContent = isFinalDocx ? "Télécharger l'Annuaire (.docx)" : "Télécharger l'Annuaire (.pdf)";
+                }
+
+                if (downloadYearbookPdfLink) {
+                    if (isFinalDocx && data.pdf_url) {
+                        downloadYearbookPdfLink.href = data.pdf_url;
+                        downloadYearbookPdfLink.classList.remove("hidden");
+                    } else {
+                        downloadYearbookPdfLink.classList.add("hidden");
+                    }
+                }
+
+                if (yearbookResultBox) {
+                    yearbookResultBox.classList.remove("hidden");
+                }
+            } else if (data.status === "failed") {
+                clearInterval(interval);
+                resetYearbookUI();
+                setStatus("failed", "Échec");
+                addLog(`❌ La génération de l'annuaire a échoué.`, "failed");
+
+                const yearbookErrorText = document.getElementById("yearbookErrorText");
+                const yearbookErrorLogs = document.getElementById("yearbookErrorLogs");
+                const yearbookErrorBox = document.getElementById("yearbookErrorBox");
+
+                if (yearbookErrorText) {
+                    yearbookErrorText.textContent = "Une erreur est survenue lors de la génération ou conversion.";
+                }
+                if (yearbookErrorLogs) {
+                    yearbookErrorLogs.textContent = data.error || "Aucune log d'erreur disponible.";
+                }
+                if (yearbookErrorBox) {
+                    yearbookErrorBox.classList.remove("hidden");
+                }
             }
-        });
-    }
+        } catch (err) {
+            console.error("[Yearbook Polling Error]", err);
+        }
+    }, 2000);
+}
 
-    // ============================================================
-    // GESTION DU MODULE ANNUAIRE
-    // ============================================================
+function initYearbook() {
     const generateYearbookBtn = document.getElementById("generateYearbookBtn");
-    const yearbookYear = document.getElementById("yearbookYear");
-    const yearbookGouv = document.getElementById("yearbookGouv");
-    const yearbookResultBox = document.getElementById("yearbookResultBox");
-    const yearbookResultTitle = document.getElementById("yearbookResultTitle");
-    const downloadYearbookLink = document.getElementById("downloadYearbookLink");
-    const yearbookErrorBox = document.getElementById("yearbookErrorBox");
-    const yearbookErrorText = document.getElementById("yearbookErrorText");
-    const yearbookErrorLogs = document.getElementById("yearbookErrorLogs");
-    const yearbookSpinner = generateYearbookBtn ? generateYearbookBtn.querySelector(".yearbook-spinner") : null;
+    if (!generateYearbookBtn) return;
 
-    if (generateYearbookBtn) {
-        generateYearbookBtn.addEventListener("click", async () => {
-        const year = parseInt(yearbookYear.value);
-        const gouv = yearbookGouv.value;
-        const gouvText = yearbookGouv.options[yearbookGouv.selectedIndex].text;
+    async function handleGenerate(e) {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        const yearbookYear = document.getElementById("yearbookYear");
+        const yearbookGouv = document.getElementById("yearbookGouv");
+        const yearbookFormat = document.getElementById("yearbookFormat");
+        const yearbookSpinner = generateYearbookBtn.querySelector(".yearbook-spinner");
+        const yearbookResultBox = document.getElementById("yearbookResultBox");
+        const yearbookErrorBox = document.getElementById("yearbookErrorBox");
+
+        const year = yearbookYear ? parseInt(yearbookYear.value) : 2021;
+        const gouv = yearbookGouv ? yearbookGouv.value : "national";
+        const gouvText = (yearbookGouv && yearbookGouv.selectedIndex >= 0) ? yearbookGouv.options[yearbookGouv.selectedIndex].text : "National";
+        
+        const format = (yearbookFormat && yearbookFormat.value) ? yearbookFormat.value.toLowerCase().trim() : "docx";
+        const formatLabel = format === "docx" ? "Word (.docx)" : "PDF (.pdf)";
 
         if (!year || year < 2015 || year > 2024) {
             addLog("⚠️ Année invalide (doit être entre 2015 et 2024).", "failed");
+            alert("Veuillez choisir une année valide entre 2015 et 2024.");
             return;
         }
 
-        // Bloquer l'interface de l'annuaire
         generateYearbookBtn.disabled = true;
-        yearbookSpinner.classList.remove("hidden");
-        yearbookResultBox.classList.add("hidden");
-        yearbookErrorBox.classList.add("hidden");
+        if (yearbookSpinner) yearbookSpinner.classList.remove("hidden");
+        if (yearbookResultBox) yearbookResultBox.classList.add("hidden");
+        if (yearbookErrorBox) yearbookErrorBox.classList.add("hidden");
 
-        addLog(`📂 Démarrage de la génération de l'annuaire - ${gouvText} (${year}-${year + 1})`);
-        setStatus("running", "Génération Annuaire");
+        addLog(`⏳ Démarrage de la génération de l'annuaire (${formatLabel}) - ${gouvText} (${year}-${year + 1})`);
+        setStatus("running", `Génération Annuaire (${formatLabel})`);
 
         try {
+            console.log("[Yearbook] Envoi de la requête avec payload:", { year, gouv, format });
             const response = await fetch("/api/v1/yearbook/generate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ year: year, gouv: gouv })
+                body: JSON.stringify({ year: year, gouv: gouv, format: format })
             });
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -453,56 +256,26 @@ document.addEventListener("DOMContentLoaded", () => {
             const taskId = data.request_id;
             addLog(`✅ Tâche d'annuaire acceptée. ID: ${taskId}`);
 
-            // Lancer le polling pour l'annuaire
-            pollYearbookStatus(taskId, year, gouvText);
+            pollYearbookStatus(taskId, year, gouvText, format);
         } catch (error) {
             addLog(`❌ Échec d'envoi de la demande d'annuaire : ${error.message}`, "failed");
             resetYearbookUI();
             setStatus("failed", "Échec");
+
+            if (yearbookErrorBox) {
+                const logsEl = document.getElementById("yearbookErrorLogs");
+                if (logsEl) logsEl.textContent = error.message;
+                yearbookErrorBox.classList.remove("hidden");
+            }
         }
-    });
+    }
+
+    // generateYearbookBtn.onclick = handleGenerate; // Removed to prevent double-triggering
+    generateYearbookBtn.addEventListener("click", handleGenerate);
 }
 
-    function resetYearbookUI() {
-        generateYearbookBtn.disabled = false;
-        yearbookSpinner.classList.add("hidden");
-    }
 
-    function pollYearbookStatus(taskId, year, gouvText) {
-        const interval = setInterval(async () => {
-            try {
-                const response = await fetch(`/api/v1/maps/status/${taskId}`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                const data = await response.json();
-
-                if (data.status === "completed") {
-                    clearInterval(interval);
-                    resetYearbookUI();
-                    setStatus("success", "Succès");
-                    addLog(`🎉 Annuaire généré avec succès en PDF !`, "success");
-
-                    yearbookResultTitle.textContent = `Annuaire ${gouvText} — ${year}-${year + 1}`;
-                    downloadYearbookLink.href = data.pdf_url;
-                    yearbookResultBox.classList.remove("hidden");
-                } else if (data.status === "failed") {
-                    clearInterval(interval);
-                    resetYearbookUI();
-                    setStatus("failed", "Échec");
-                    addLog(`❌ La génération de l'annuaire a échoué.`, "failed");
-
-                    yearbookErrorText.textContent = "Une erreur est survenue lors de l'extraction des données ou de la compilation LaTeX.";
-                    yearbookErrorLogs.textContent = data.error || "Aucune log d'erreur disponible.";
-                    yearbookErrorBox.classList.remove("hidden");
-                }
-            } catch (err) {
-                console.error("Erreur de polling annuaire:", err);
-            }
-        }, 2000);
-    }
-
-    // ============================================================
-    // GESTION DYNAMIQUE DES PROVIDERS LLM (API, COLAB, KAGGLE, LOCAL)
+// GESTION DYNAMIQUE DES PROVIDERS LLM (API, COLAB, KAGGLE, LOCAL)
     // ============================================================
     const llmProviderSelect = document.getElementById("llmProviderSelect");
     const providerModal = document.getElementById("providerModal");
@@ -594,7 +367,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ============================================================
-    // LOGIQUE D'INGESTION DES FICHIERS MDB
+
+// LOGIQUE D'INGESTION DES FICHIERS MDB
     // ============================================================
     const ingestMdbForm = document.getElementById("ingestMdbForm");
     const ingestResultBox = document.getElementById("ingestResultBox");
@@ -665,7 +439,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ============================================================
-    // LOGIQUE D'INGESTION DES SHAPEFILES SPATIAUX
+
+// LOGIQUE D'INGESTION DES SHAPEFILES SPATIAUX
     // ============================================================
     const ingestShapefilesBtn = document.getElementById("ingestShapefilesBtn");
     const shapefilesSpinner = document.getElementById("shapefilesSpinner");
@@ -720,30 +495,117 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ============================================================
-    // CHAT ANNUAIRE RAG
+
+// CHAT ANNUAIRE RAG
     // ============================================================
     const chatMessages = document.getElementById("chatMessages");
     const chatQuestionInput = document.getElementById("chatQuestionInput");
     const sendChatBtn = document.getElementById("sendChatBtn");
     const chatSpinner = document.getElementById("chatSpinner");
 
-    function appendChatMessage(role, text, sources, images) {
+    function resolveImageUrl(url) {
+        if (!url) return "";
+        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/")) {
+            return url;
+        }
+        return `/api/v1/maps/image/${url}`;
+    }
+
+    function displayMapResult(imageUrl) {
+        if (!imageUrl) return;
+        const safeUrl = resolveImageUrl(imageUrl);
+        const mapPlaceholder = document.getElementById("mapPlaceholder");
+        const mapImage = document.getElementById("mapImage");
+        const downloadBtn = document.getElementById("downloadBtn");
+
+        if (mapPlaceholder) {
+            mapPlaceholder.classList.add("hidden");
+            mapPlaceholder.style.display = "none";
+        }
+        if (mapImage) {
+            mapImage.src = safeUrl;
+            mapImage.classList.remove("hidden");
+            mapImage.style.display = "block";
+        }
+        if (downloadBtn) {
+            downloadBtn.href = safeUrl;
+            downloadBtn.classList.remove("hidden");
+        }
+
+        // Basculer sur l'onglet Rendu (visualisation)
+        const renduBtn = document.querySelector('.tab-btn[data-tab="visualisation"]');
+        if (renduBtn) {
+            renduBtn.click();
+        }
+    }
+
+    function renderSimpleMarkdown(rawText) {
+        if (!rawText) return "";
+        let text = rawText;
+
+        // 1. Process markdown table if present
+        const tableRegex = /(\|[^\n]+\|\r?\n\|[-: |]+\|\r?\n(?:\|[^\n]+\|\r?\n?)+)/g;
+        text = text.replace(tableRegex, (match) => {
+            const lines = match.trim().split(/\r?\n/).filter(l => l.trim().startsWith("|"));
+            if (lines.length < 2) return match;
+            const parseRow = (rowStr) => {
+                return rowStr.split("|")
+                    .slice(1, -1)
+                    .map(c => c.trim());
+            };
+            const headerCells = parseRow(lines[0]);
+            let html = '<div style="overflow-x:auto; margin:10px 0;"><table class="data-table" style="font-size:0.8rem; width:100%; border-collapse:collapse; min-width:auto; border-radius:6px; overflow:hidden;"><thead><tr>';
+            headerCells.forEach(h => {
+                html += `<th style="padding:6px 10px; background:#1e3a5f; color:#fff; border:1px solid rgba(255,255,255,0.1); text-align:left;">${h}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            for (let i = 2; i < lines.length; i++) {
+                const cells = parseRow(lines[i]);
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">';
+                cells.forEach(c => {
+                    html += `<td style="padding:5px 10px; border:1px solid rgba(255,255,255,0.05);">${c}</td>`;
+                });
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+            return html;
+        });
+
+        // 2. Bold and italic
+        text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+        // 3. Newlines outside tables
+        const parts = text.split(/(<div style="overflow-x:auto[\s\S]*?<\/div>)/g);
+        for (let i = 0; i < parts.length; i++) {
+            if (!parts[i].startsWith('<div style="overflow-x:auto')) {
+                parts[i] = parts[i].replace(/\n/g, '<br>');
+            }
+        }
+        return parts.join('');
+    }
+
+    function appendChatMessage(role, text, sources, images, save = true) {
         if (!chatMessages) return;
         const wrapper = document.createElement("div");
         wrapper.style.cssText = `display:flex; flex-direction:column; gap:4px; align-items:${role === 'user' ? 'flex-end' : 'flex-start'}; margin-bottom:12px;`;
 
         const bubble = document.createElement("div");
         bubble.style.cssText = `
-            max-width:85%; padding:12px 16px; border-radius:14px; line-height:1.6; font-size:0.9rem;
+            max-width:92%; padding:12px 16px; border-radius:14px; line-height:1.6; font-size:0.9rem;
             background:${role === 'user'
                 ? 'linear-gradient(135deg,rgba(52,152,219,0.7),rgba(41,128,185,0.7))'
                 : 'rgba(255,255,255,0.07)'};
             color:#fff; border:1px solid rgba(255,255,255,0.1);
             border-bottom-right-radius:${role === 'user' ? '4px' : '14px'};
             border-bottom-left-radius:${role === 'user' ? '14px' : '4px'};
-            white-space:pre-wrap;
+            ${role === 'user' ? 'white-space:pre-wrap;' : ''}
         `;
-        bubble.textContent = text;
+        if (role === 'assistant') {
+            bubble.innerHTML = renderSimpleMarkdown(text);
+        } else {
+            bubble.textContent = text;
+        }
         wrapper.appendChild(bubble);
 
         if (images && images.length > 0 && role === 'assistant') {
@@ -752,8 +614,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const img = document.createElement("img");
                 img.src = safeUrl;
                 img.style.cssText = "max-width:100%; max-height:300px; border-radius:8px; margin-top:8px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; object-fit:contain;";
-                img.title = "Cliquer pour ouvrir en grand";
-                img.addEventListener("click", () => window.open(safeUrl, '_blank'));
+                img.title = "Cliquer pour afficher dans l'onglet Rendu";
+                img.addEventListener("click", () => displayMapResult(safeUrl));
                 wrapper.appendChild(img);
             });
         }
@@ -771,6 +633,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
         chatMessages.appendChild(wrapper);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        if (save) {
+            try {
+                let history = JSON.parse(localStorage.getItem('cartagenChatHistory') || '[]');
+                history.push({role, text, sources, images});
+                localStorage.setItem('cartagenChatHistory', JSON.stringify(history));
+            } catch (e) {
+                console.error("Error saving chat history", e);
+            }
+        }
     }
 
     function renderAgentTraces(traces) {
@@ -990,32 +862,19 @@ document.addEventListener("DOMContentLoaded", () => {
                         }
 
                         if (data.table_html) {
+                            const tableDataDisplay = document.getElementById("tableDataDisplay");
+                            const copyTableBtn = document.getElementById("copyTableBtn");
                             if (tableDataDisplay) tableDataDisplay.innerHTML = data.table_html;
                             if (copyTableBtn) copyTableBtn.classList.remove("hidden");
+                            const wantsTable = /tableau|table|liste|données|donnees|relevé|releve|classement/i.test(question);
                             const tableBtn = document.querySelector('.tab-btn[data-tab="tableau-donnees"]');
-                            if (tableBtn && (!data.images || data.images.length === 0)) {
+                            if (tableBtn && wantsTable && (!data.images || data.images.length === 0)) {
                                 tableBtn.click();
                             }
                         }
 
                         if (data.images && data.images.length > 0) {
-                            const firstImage = resolveImageUrl(data.images[0]);
-                            if (mapPlaceholder) mapPlaceholder.classList.add("hidden");
-                            if (mapImage) {
-                                mapImage.src = firstImage;
-                                mapImage.classList.remove("hidden");
-                            }
-                            if (downloadBtn) {
-                                downloadBtn.href = firstImage;
-                                downloadBtn.classList.remove("hidden");
-                            }
-                            // Basculer directement sur l'onglet Rendu de la carte
-                            const renduBtn = document.querySelector('.tab-btn[data-tab="visualisation"]');
-                            if (renduBtn) {
-                                renduBtn.click();
-                            } else if (tabBtns && tabBtns.length > 0) {
-                                tabBtns[0].click();
-                            }
+                            displayMapResult(data.images[0]);
                         }
 
                         if (chatSpinner) chatSpinner.classList.add("hidden");
@@ -1058,8 +917,74 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 
+    // Bouton Nouvelle Session / Effacer le chat
+    const clearChatBtn = document.getElementById("clearChatBtn");
+    if (clearChatBtn) {
+        clearChatBtn.onclick = function() {
+            if (confirm("Démarrer une nouvelle session de chat et effacer les messages actuels ?")) {
+                localStorage.removeItem('cartagenChatHistory');
+                if (chatMessages) {
+                    chatMessages.innerHTML = `
+                        <div class="chat-msg-system" style="
+                            color:rgba(255,255,255,0.5); font-size:0.8rem; text-align:center;
+                            padding:8px; border-radius:6px;">
+                            <i class="fa-solid fa-info-circle"></i>
+                            Nouvelle session démarrée. Posez votre question pluviométrique ci-dessous.
+                        </div>
+                    `;
+                }
+                addLog("🧹 Session de chat réinitialisée.", "info");
+            }
+        };
+    }
+
+    // Gestion de la session serveur : Efface automatiquement l'historique lors du redémarrage de "python run_app.py"
+    async function initChatSession() {
+        try {
+            const res = await fetch('/api/v1/session/info');
+            if (res.ok) {
+                const data = await res.json();
+                const currentBootId = data.boot_id;
+                const savedBootId = localStorage.getItem('cartagenServerBootId');
+
+                // Si le serveur a redémarré (nouvel identifiant de boot différent), effacer les anciens messages
+                if (savedBootId && savedBootId !== currentBootId) {
+                    console.log("[CartaGen] Redémarrage du serveur détecté -> Démarrage d'une nouvelle session de chat.");
+                    localStorage.removeItem('cartagenChatHistory');
+                }
+                localStorage.setItem('cartagenServerBootId', currentBootId);
+            }
+        } catch (e) {
+            console.warn("Impossible de vérifier l'ID de session serveur :", e);
+        }
+
+        // Charger l'historique seulement s'il appartient à cette session active
+        try {
+            let history = JSON.parse(localStorage.getItem('cartagenChatHistory') || '[]');
+            if (history.length > 0 && chatMessages) {
+                const systemMsg = chatMessages.querySelector(".chat-msg-system");
+                if (systemMsg) systemMsg.remove();
+                let lastImage = null;
+                history.forEach(msg => {
+                    appendChatMessage(msg.role, msg.text, msg.sources, msg.images, false);
+                    if (msg.images && msg.images.length > 0) {
+                        lastImage = msg.images[0];
+                    }
+                });
+                if (lastImage) {
+                    displayMapResult(lastImage);
+                }
+            }
+        } catch (e) {
+            console.error("Erreur lors du chargement de l'historique du chat :", e);
+        }
+    }
+
+    initChatSession();
+
     // ============================================================
-    // GESTION DE LA CONFIGURATION DES VARIABLES .ENV
+
+// GESTION DE LA CONFIGURATION DES VARIABLES .ENV
     // ============================================================
     const envStatusAlert = document.getElementById("envStatusAlert");
     const modeFormBtn = document.getElementById("modeFormBtn");
@@ -1312,5 +1237,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Chargement initial
     loadEnvConfig();
-});
 
+
+// ============================================================
+// INITIALISATION GLOBALE DE L'APPLICATION
+// ============================================================
+function initApp() {
+    initTabs();
+    initClipboard();
+    initYearbook();
+    
+    // Charger dynamiquement les providers LLM au démarrage
+    if (typeof loadDynamicProviders === "function") {
+        loadDynamicProviders();
+    }
+    
+    // Charger la configuration d'environnement .env au démarrage
+    if (typeof loadEnvConfig === "function") {
+        loadEnvConfig();
+    }
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initApp);
+} else {
+    initApp();
+}

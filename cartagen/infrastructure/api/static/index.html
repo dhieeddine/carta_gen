@@ -42,6 +42,10 @@
                         <i class="fa-solid fa-comments" style="color:var(--accent-color);"></i> Chat Annuaire
                     </h3>
                     <div style="display:flex; align-items:center; gap:8px;">
+                        <button id="clearChatBtn" type="button" title="Nouvelle session de chat (Effacer l'historique)" style="background:rgba(255,255,255,0.08); color:#cbd5e1; padding:6px 10px; font-size:0.78rem; border-radius:6px; border:1px solid rgba(255,255,255,0.15); cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.2s ease;">
+                            <i class="fa-solid fa-rotate-right" style="pointer-events:none;"></i>
+                            <span style="pointer-events:none;">Nouveau</span>
+                        </button>
                         <button id="toggleRagBtn" type="button" data-enabled="true" style="background:#27ae60; color:#fff; padding:6px 14px; font-size:0.78rem; border-radius:6px; font-weight:600; border:none; cursor:pointer; display:flex; align-items:center; gap:5px; transition:all 0.3s ease;">
                             <i class="fa-solid fa-brain" style="pointer-events:none;"></i>
                             <span id="ragToggleText" style="pointer-events:none;">RAG : ACTIVÉ</span>
@@ -103,7 +107,7 @@
                         <i class="fa-solid fa-sliders"></i> Configuration .env
                     </button>
                     <button class="tab-btn" data-tab="annuaire-yearbook">
-                        <i class="fa-solid fa-book"></i> Annuaire PDF
+                        <i class="fa-solid fa-book"></i> Annuaires
                     </button>
                     <button class="tab-btn" data-tab="ingest-mdb">
                         <i class="fa-solid fa-cloud-arrow-up"></i> Importation MDB
@@ -447,7 +451,7 @@
                 <!-- Onglet 5 : Génération Annuaire PDF -->
                 <div class="tab-content" id="annuaire-yearbook">
                     <div class="yearbook-generator-container">
-                        <h3><i class="fa-solid fa-book"></i> Générer l'Annuaire Pluviométrique</h3>
+                        <h3><i class="fa-solid fa-book"></i> Annuaires</h3>
                         <p class="section-desc">Générez un document d'annuaire complet en PDF contenant les cumuls mensuels, saisonniers, cartes d'isohyètes et relevés journaliers détaillés.</p>
                         
                         <div class="yearbook-form">
@@ -485,8 +489,16 @@
                                     <option value="Ariana">Ariana</option>
                                 </select>
                             </div>
+                            <div class="form-group">
+                                <label for="yearbookFormat">Format du document :</label>
+                                <select id="yearbookFormat">
+                                    <option value="pdf">📄 Document PDF (.pdf) - Prêt pour publication</option>
+                                    <option value="docx">📝 Document Word (.docx) - Modifiable / Édition</option>
+                                </select>
+                            </div>
+                            
                             <button id="generateYearbookBtn" class="primary-btn">
-                                <span class="btn-text">Générer le PDF</span>
+                                <span class="btn-text">Générer l'Annuaire</span>
                                 <i class="fa-solid fa-file-pdf btn-icon"></i>
                                 <div class="yearbook-spinner hidden"></div>
                             </button>
@@ -494,19 +506,25 @@
                         
                         <div class="yearbook-result-box hidden" id="yearbookResultBox">
                             <div class="result-card">
-                                <i class="fa-solid fa-file-pdf pdf-large-icon"></i>
+                                <i class="fa-solid fa-file-word pdf-large-icon" id="yearbookResultIcon" style="color: #2b579a;"></i>
                                 <div class="result-details">
-                                    <h4 id="yearbookResultTitle">Annuaire Béja 2021-2022</h4>
-                                    <p>Le document a été généré avec succès en format PDF.</p>
-                                    <a id="downloadYearbookLink" class="primary-btn download-link" href="#" target="_blank">
-                                        Télécharger l'Annuaire
-                                        <i class="fa-solid fa-download"></i>
-                                    </a>
+                                    <h4 id="yearbookResultTitle">Annuaire 2021-2022</h4>
+                                    <p id="yearbookResultDesc">Le document a été généré avec succès en format Word (.docx).</p>
+                                    <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                                        <a id="downloadYearbookLink" class="primary-btn download-link" href="#" target="_blank" style="text-decoration:none;">
+                                            <i class="fa-solid fa-download"></i>
+                                            <span id="downloadYearbookText">Télécharger l'Annuaire (.docx)</span>
+                                        </a>
+                                        <a id="downloadYearbookPdfLink" class="secondary-btn download-link hidden" href="#" target="_blank" style="text-decoration:none; padding: 10px 18px; border-radius: 8px; display: inline-flex; align-items: center; gap: 8px; font-weight: 600; background: #34495e; color: #fff;">
+                                            <i class="fa-solid fa-file-pdf" style="color:#e74c3c;"></i>
+                                            <span>Version PDF (.pdf)</span>
+                                        </a>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="yearbook-error-box hidden" id="yearbookErrorBox">
+                        <div class="yearbook-error-box<div class="yearbook-error-box hidden" id="yearbookErrorBox">
                             <div class="error-card">
                                 <i class="fa-solid fa-circle-exclamation error-icon"></i>
                                 <div class="error-details">
@@ -624,13 +642,12 @@
         </div>
     </div>
 
-    <!-- Script de logique -->
+        <!-- Script de logique -->
     <script>
-        if (window.location.protocol === 'file:') {
-            document.write('<script src="./app.js?v=1.2.3"><\/script>');
-        } else {
-            document.write('<script src="/static/app.js?v=1.2.3"><\/script>');
-        }
+        const appScript = document.createElement('script');
+        const isFile = window.location.protocol === 'file:';
+        appScript.src = (isFile ? './app.js' : '/static/app.js') + '?v=' + Date.now();
+        document.body.appendChild(appScript);
     </script>
 </body>
 </html>

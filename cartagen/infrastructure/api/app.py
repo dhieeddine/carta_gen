@@ -7,12 +7,21 @@ import subprocess
 import unicodedata
 import re
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, status
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+
+from cartagen.version import __version__, get_version_metadata
+from cartagen.infrastructure.logging import CorrelationIdMiddleware, AuditLogger, setup_logger
+from cartagen.infrastructure.concurrency import (
+    optimistic_lock_manager,
+    OptimisticLockConflictError,
+    task_mutex_manager,
+    JobAlreadyRunningError
+)
 
 from cartagen.domain.models.map_request import MapRequest
 from cartagen.infrastructure.agents.orchestrator import CartaGenOrchestrator
@@ -39,11 +48,42 @@ WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", DEFAULT_WORKSPACE_ROOT)
 mdb_service = MdbIngestionService(DATABASE_URL)
 shapefile_service = ShapefileIngestionService(DATABASE_URL, SHAPEFILES_DIR)
 
+audit_logger = AuditLogger()
+
 app = FastAPI(
     title="CartaGen API — Système Multi-Agents DGRE",
-    description="API HTTP permettant la génération d'isohyètes à la demande à partir de PostgreSQL.",
-    version="1.0.0"
+    description="API HTTP permettant la génération d'isohyètes et la gestion hydrologique (SCM compliant).",
+    version=__version__
 )
+
+# Middleware de traçabilité contextuelle et Correlation ID (Volet 1 SCM)
+app.add_middleware(CorrelationIdMiddleware)
+
+# Gestionnaires globaux d'exceptions pour la gestion des conflits (Volet 3 SCM)
+@app.exception_handler(OptimisticLockConflictError)
+async def optimistic_lock_exception_handler(request: Request, exc: OptimisticLockConflictError):
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "Conflict",
+            "error_type": "OptimisticLockConflict",
+            "message": exc.message,
+            "resource_id": exc.resource_id,
+            "current_version": exc.current_version,
+            "expected_version": exc.expected_version
+        }
+    )
+
+@app.exception_handler(JobAlreadyRunningError)
+async def job_already_running_exception_handler(request: Request, exc: JobAlreadyRunningError):
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "Conflict",
+            "error_type": "PessimisticLockConflict",
+            "message": str(exc)
+        }
+    )
 
 # Configuration CORS configurable via .env pour la sécurité en production
 ALLOWED_ORIGINS = settings.allowed_origins.split(",")
@@ -52,8 +92,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in ALLOWED_ORIGINS],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "If-Match"],
 )
 
 # Initialisation de l'orchestrateur
@@ -84,6 +124,10 @@ if os.path.exists(os.path.join(WORKSPACE_ROOT, "figures")):
 @app.on_event("startup")
 async def startup_event():
     """Initialisation automatique des tables spatiales PostGIS au démarrage."""
+    if os.getenv("SKIP_STARTUP_DB_INGEST", "false").lower() in ("1", "true", "yes"):
+        print("[Startup] Ingestion automatique au démarrage ignorée (SKIP_STARTUP_DB_INGEST=true).")
+        return
+
     try:
         print("[Startup] Vérification et ingestion automatique des shapefiles PostGIS...")
         shapefile_service.ingest_shapefiles()
@@ -123,6 +167,7 @@ class LlmTestPayload(BaseModel):
 class YearbookPayload(BaseModel):
     year: int
     gouv: str
+    format: Optional[str] = "pdf" 
 
 class AnnuaireChatPayload(BaseModel):
     question: str
@@ -135,45 +180,88 @@ def normalize_string(s):
     s = re.sub(r'_+', '_', s)
     return s.lower().strip('_')
 
-def run_async_yearbook_generation(request_id: str, year: int, gouv: str):
+def run_async_yearbook_generation(request_id: str, year: int, gouv: str, format_type: str = "pdf"):
     task_registry[request_id]["status"] = "processing"
     try:
         sandbox_dir = os.path.join(WORKSPACE_ROOT, "sandbox_runs")
         os.makedirs(sandbox_dir, exist_ok=True)
         
+        is_docx = (format_type or "pdf").lower() == "docx"
         pdf_filename = f"annuaire_{normalize_string(gouv)}_{year}.pdf"
         pdf_path = os.path.join(sandbox_dir, pdf_filename)
+        docx_filename = f"annuaire_{normalize_string(gouv)}_{year}.docx"
+        docx_path = os.path.join(sandbox_dir, docx_filename)
         
-        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+        # 1. Vérifier si la version Word demandée existe déjà en cache
+        if is_docx and os.path.exists(docx_path) and os.path.getsize(docx_path) > 0:
             task_registry[request_id].update({
                 "status": "completed",
-                "pdf_url": f"/api/v1/yearbook/download/{pdf_filename}",
-                "logs": "L'annuaire a été récupéré depuis le cache (déjà généré précédemment)."
+                "file_url": f"/api/v1/yearbook/download/{docx_filename}",
+                "pdf_url": f"/api/v1/yearbook/download/{pdf_filename}" if os.path.exists(pdf_path) else None,
+                "docx_url": f"/api/v1/yearbook/download/{docx_filename}",
+                "format": "docx",
+                "logs": "L'annuaire Word a été récupéré depuis le cache."
             })
             return
-        
-        script_path = os.path.join(WORKSPACE_ROOT, "generer_annuaire_database.py")
-        cmd = [
-            sys.executable,
-            script_path,
-            "--year", str(year),
-            "--gouv", gouv,
-            "--output", pdf_path
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
-        
-        # Exigence : Vérifier d'abord si le fichier PDF a été généré et est valide, même en cas de warning/erreur pdflatex
-        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+
+        # 2. Vérifier si la version PDF demandée existe déjà en cache
+        if not is_docx and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
             task_registry[request_id].update({
                 "status": "completed",
+                "file_url": f"/api/v1/yearbook/download/{pdf_filename}",
                 "pdf_url": f"/api/v1/yearbook/download/{pdf_filename}",
-                "logs": result.stdout
+                "format": "pdf",
+                "logs": "L'annuaire PDF a été récupéré depuis le cache."
+            })
+            return
+            
+        # 3. Compiler le PDF de base si non présent
+        if not (os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0):
+            script_path = os.path.join(WORKSPACE_ROOT, "generer_annuaire_database.py")
+            cmd = [
+                sys.executable,
+                script_path,
+                "--year", str(year),
+                "--gouv", gouv,
+                "--output", pdf_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=WORKSPACE_ROOT)
+            out_logs = result.stdout
+        else:
+            out_logs = "PDF existant réutilisé pour la conversion."
+        
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            # 4. Si format Word demandé, convertir via pdf2docx
+            if is_docx:
+                # Verifier si un fichier .docx valide existe deja
+                if not (os.path.exists(docx_path) and os.path.getsize(docx_path) > 1000):
+                    try:
+                        conv_script = os.path.join(WORKSPACE_ROOT, "convert_to_docx.py")
+                        # Executer convert_to_docx.py en sous-processus isole pour eviter les conflits de threads uvicorn
+                        # Conversion integrale de 100% des pages de l'annuaire
+                        conv_cmd = [sys.executable, conv_script, "--input", pdf_path, "--output", docx_path]
+                        conv_res = subprocess.run(conv_cmd, cwd=WORKSPACE_ROOT, capture_output=True, text=True, timeout=3600)
+                        if conv_res.returncode != 0:
+                            print(f"[Conversion Warning] {conv_res.stderr or conv_res.stdout}")
+                        else:
+                            print(f"[Conversion Success] {docx_filename} genere avec succes.")
+                    except Exception as conv_err:
+                        print(f"[Conversion Error] {conv_err}")
+
+            is_real_docx = is_docx and os.path.exists(docx_path) and os.path.getsize(docx_path) > 0
+            target_file = docx_filename if is_real_docx else pdf_filename
+            task_registry[request_id].update({
+                "status": "completed",
+                "file_url": f"/api/v1/yearbook/download/{target_file}",
+                "pdf_url": f"/api/v1/yearbook/download/{pdf_filename}",
+                "docx_url": f"/api/v1/yearbook/download/{docx_filename}" if is_real_docx else None,
+                "format": "docx" if is_real_docx else "pdf",
+                "logs": out_logs
             })
         else:
             task_registry[request_id].update({
                 "status": "failed",
-                "error": result.stderr or result.stdout or "La compilation a échoué et aucun fichier PDF n'a été produit."
+                "error": result.stderr or result.stdout or "La compilation a échoué et aucun fichier n'a été produit."
             })
     except Exception as e:
         task_registry[request_id].update({
@@ -494,31 +582,39 @@ async def get_annuaire_image(folder_name: str, filename: str):
 async def generate_yearbook(payload: YearbookPayload, background_tasks: BackgroundTasks):
     """Soumet une demande de génération de l'annuaire pluviométrique."""
     request_id = str(uuid.uuid4())
+    req_format = (getattr(payload, 'format', 'docx') or 'docx').lower().strip()
+    print(f"\n========================================================", flush=True)
+    print(f"[API ANNUAIRE] Requête reçue : gouv={payload.gouv}, annee={payload.year}, format={req_format}", flush=True)
+    print(f"========================================================\n", flush=True)
+    
     task_registry[request_id] = {
         "status": "queued",
         "type": "yearbook",
         "year": payload.year,
         "gouv": payload.gouv,
+        "format": req_format,
         "created_at": datetime.now().isoformat()
     }
-    background_tasks.add_task(run_async_yearbook_generation, request_id, payload.year, payload.gouv)
+    background_tasks.add_task(run_async_yearbook_generation, request_id, payload.year, payload.gouv, req_format)
     return {
         "message": "Génération de l'annuaire pluviométrique en cours.",
         "request_id": request_id,
-        "status": "queued"
+        "status": "queued",
+        "format": req_format
     }
 
 @app.get("/api/v1/yearbook/download/{filename}")
 async def download_yearbook(filename: str):
-    """Télécharge le fichier PDF généré de l'annuaire."""
+    """Télécharge le fichier PDF ou Word généré de l'annuaire."""
     safe_filename = os.path.basename(filename)
-    if not safe_filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Format de fichier non autorisé.")
+    if not (safe_filename.endswith(".pdf") or safe_filename.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="Format de fichier non autorisé (seuls .pdf et .docx sont acceptés).")
     sandbox_dir = os.path.abspath(os.path.join(WORKSPACE_ROOT, "sandbox_runs"))
-    pdf_path = os.path.abspath(os.path.join(sandbox_dir, safe_filename))
-    if not pdf_path.startswith(sandbox_dir) or not os.path.exists(pdf_path):
-        raise HTTPException(status_code=404, detail="Annuaire PDF introuvable.")
-    return FileResponse(pdf_path, media_type="application/pdf", filename=safe_filename)
+    file_path = os.path.abspath(os.path.join(sandbox_dir, safe_filename))
+    if not file_path.startswith(sandbox_dir) or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Fichier d'annuaire introuvable.")
+    media_type = "application/pdf" if safe_filename.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return FileResponse(file_path, media_type=media_type, filename=safe_filename)
 
 @app.post("/api/v1/data/ingest-mdb")
 async def ingest_mdb_file(
@@ -635,6 +731,7 @@ async def chat_annuaire(payload: AnnuaireChatPayload, background_tasks: Backgrou
                 "sources": result.get("sources", []),
                 "nb_passages": result.get("nb_passages", 0),
                 "images": normalized_images,
+                "image_url": normalized_images[0] if normalized_images else None,
                 "code": result.get("code", ""),
                 "table_html": result.get("table_html", None),
                 "agent_traces": result.get("agent_traces", {})
@@ -652,11 +749,100 @@ async def chat_annuaire(payload: AnnuaireChatPayload, background_tasks: Backgrou
         "status": "processing"
     }
 
+SERVER_BOOT_ID = str(uuid.uuid4())
+SERVER_BOOT_TIME = datetime.now().isoformat()
+
+@app.get("/api/v1/session/info")
+async def get_session_info():
+    """Renvoie l'ID unique de démarrage de l'instance serveur pour détecter les redémarrages de session."""
+    return {
+        "boot_id": SERVER_BOOT_ID,
+        "boot_time": SERVER_BOOT_TIME
+    }
+
+class VersionedConfigPayload(BaseModel):
+    data: Dict[str, Any]
+    expected_version: int
+
+# =========================================================================
+# ENDPOINTS SCM — SUJET 10 (VERSIONING, AUDIT & GESTION DES CONFLITS)
+# =========================================================================
+
+@app.get("/api/v1/version")
+async def get_system_version():
+    """Volet 2 : Versioning Sémantique (SemVer 2.0.0)."""
+    return get_version_metadata()
+
+@app.get("/api/v1/scm/audit-trail")
+async def get_audit_trail(limit: int = 50):
+    """Volet 1 : Consultation du registre d'audit de sécurité et traçabilité."""
+    audit_file = audit_logger.audit_file
+    if not os.path.exists(audit_file):
+        return {"events": [], "count": 0}
+    
+    events = []
+    import json
+    with open(audit_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    events.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+    return {
+        "events": events[-limit:],
+        "total_records": len(events),
+        "audit_file": audit_file
+    }
+
+@app.get("/api/v1/config/versioned/{resource_id}")
+async def get_versioned_resource(resource_id: str):
+    """Volet 3 : Récupère une ressource avec son numéro de version et son ETag."""
+    record = optimistic_lock_manager.register_or_get(
+        resource_id, 
+        default_data={"description": "Ressource par défaut", "active": True}
+    )
+    return record
+
+@app.put("/api/v1/config/versioned/{resource_id}")
+async def update_versioned_resource(
+    resource_id: str, 
+    payload: VersionedConfigPayload,
+    request: Request
+):
+    """Volet 3 : Met à jour une ressource avec détection et rejet de conflits concurrents (HTTP 409)."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    updated = optimistic_lock_manager.update_resource(
+        resource_id=resource_id,
+        new_data=payload.data,
+        expected_version=payload.expected_version,
+        user=request.headers.get("X-User-ID", "anonymous"),
+        client_ip=client_ip
+    )
+    return updated
+
+@app.post("/api/v1/tasks/lock-demo/{task_id}")
+async def acquire_task_lock(task_id: str, ttl_seconds: int = 120):
+    """Volet 3 : Verrouillage Pessimiste / Mutex Applicatif."""
+    task_mutex_manager.acquire_lock(task_id, owner="api_worker", timeout_seconds=ttl_seconds)
+    return {
+        "success": True,
+        "message": f"Verrou acquis avec succès sur la tâche '{task_id}'.",
+        "ttl_seconds": ttl_seconds
+    }
+
+@app.delete("/api/v1/tasks/lock-demo/{task_id}")
+async def release_task_lock(task_id: str):
+    """Volet 3 : Libération manuelle du verrou pessimiste."""
+    released = task_mutex_manager.release_lock(task_id)
+    return {"released": released, "task_id": task_id}
+
 @app.get("/health")
 async def health_check():
     """Endpoint simple de supervision de l'API."""
     return {
         "status": "healthy",
+        "boot_id": SERVER_BOOT_ID,
         "timestamp": datetime.now().isoformat()
     }
 

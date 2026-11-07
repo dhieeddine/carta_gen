@@ -488,7 +488,7 @@ TITRE OFFICIEL DE LA CARTE (UTILISE EXACTEMENT CE TITRE, ne le modifie pas) : "{
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=3072,
+                max_new_tokens=4072,
                 temperature=0.1,
                 top_p=0.95,
                 repetition_penalty=1.1,

@@ -1,0 +1,89 @@
+name: CartaGen CI/CD Pipeline — Software Configuration Management
+
+on:
+  push:
+    branches: [ "main", "release/*", "develop" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  quality-and-tests:
+    name: Code Quality, SCM Compliance & Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password_ci
+          POSTGRES_DB: dgre_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 1. Checkout Code Source (Git SCM)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 2. Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 3. Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 pytest pytest-cov alembic
+
+      - name: 4. Contrôle de Qualité Statique (Linting Flake8)
+        run: |
+          # Stop build if there are Python syntax errors or undefined names
+          flake8 cartagen --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Warnings soft check
+          flake8 cartagen --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: 5. Validation des Migrations de Schéma (Alembic Upgrade/Downgrade Reversibility)
+        env:
+          DATABASE_URL: postgresql://postgres:password_ci@localhost:5432/dgre_test_db
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
+
+      - name: 6. Exécution des Tests Automatisés & Couverture
+        env:
+          DATABASE_URL: postgresql://postgres:password_ci@localhost:5432/dgre_test_db
+          WORKSPACE_ROOT: .
+        run: |
+          python -m unittest discover -s tests
+
+      - name: 7. Extraction et Validation du Versioning Sémantique (SemVer)
+        run: |
+          python -c "from cartagen.version import get_version_metadata; print('Version validée :', get_version_metadata())"
+
+  docker-build:
+    name: Build & Packaging Image Conteneurisée
+    needs: quality-and-tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (Dry Run)
+        run: |
+          docker build -t cartagen-api:latest .

@@ -91,6 +91,8 @@ def _detect_gouvernorats_fuzzy(question: str) -> List[str]:
     return list(detected)
 
 
+_RESPONSE_CACHE = {}
+
 class AnnuaireRAGAgent:
     """
     Agent RAG dédié aux questions sur les annuaires pluviométriques.
@@ -114,6 +116,11 @@ class AnnuaireRAGAgent:
         if llm_provider:
             self.llm_provider = llm_provider.lower()
 
+        cache_key = f"{_normalize(question)}_{use_rag}"
+        if cache_key in _RESPONSE_CACHE:
+            print(f"[AnnuaireRAG] Using semantic cache for: '{question}'")
+            return _RESPONSE_CACHE[cache_key]
+
         print(f"[AnnuaireRAG] Question : '{question}' | Provider: {self.llm_provider} | RAG: {use_rag}")
 
         # 1. Détection des entités
@@ -121,7 +128,7 @@ class AnnuaireRAGAgent:
 
         # 2. Vérification si la demande nécessite une Carte / Graphique dynamique
         q_low = question.lower()
-        is_visual_request = any(kw in q_low for kw in ["carte", "isohyete", "isohyète", "map", "histogramme", "camembert", "pie", "top 10", "thiessen", "graphe"])
+        is_visual_request = any(kw in q_low for kw in ["carte", "isohyete", "isohyète", "map", "histogramme", "camembert", "pie", "thiessen", "graphe", "graphique"])
         
         detected_images = []
         generated_code = ""
@@ -132,6 +139,80 @@ class AnnuaireRAGAgent:
             detected_images = self._detect_images(question, entities)
             if detected_images:
                 print(f"[AnnuaireRAG] Carte d'annuaire officielle pré-existante trouvée directement : {detected_images}")
+                year_val = entities["annees"][0] if entities["annees"] else 2020
+                scope_val = entities["gouvernorats"][0] if entities["gouvernorats"] else "la Tunisie entière"
+                img_url = detected_images[0]
+                mois_noms = {
+                    1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril", 5: "Mai", 6: "Juin",
+                    7: "Juillet", 8: "Août", 9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre"
+                }
+
+                if any(k in img_url.lower() for k in ["carte_mois", "_janv", "_fev", "_mar", "_avr", "_mai", "_juin", "_juil", "_aout", "_sept", "_octo", "_nove", "_dece"]):
+                    m_nom = mois_noms.get(entities["mois"][0], "du mois") if entities.get("mois") else "du mois"
+                    answer_text = (
+                        f"🗺️ **Carte Pluviométrique Mensuelle ({m_nom} {year_val}) — DGRE Tunisie**\n\n"
+                        f"Voici la répartition cartographique officielle des précipitations pour **{m_nom} {year_val}** sur **{scope_val}**.\n\n"
+                        f"• **Source** : Annuaire Pluviométrique Officiel de la DGRE\n"
+                        f"• **Réseau** : 148 stations pluviométriques de référence\n\n"
+                        f"*(La carte mensuelle officielle a été récupérée directement depuis l'annuaire et est affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                elif any(k in img_url.lower() for k in ["carte_annuelle", "isohyete", "isohyetes"]):
+                    answer_text = (
+                        f"🗺️ **Carte Officielle des Isohyètes ({year_val}) — DGRE Tunisie**\n\n"
+                        f"Voici la carte officielle des isohyètes pour **{scope_val}** (Année hydrologique **{year_val}**).\n\n"
+                        f"• **Source** : Annuaire Pluviométrique Officiel de la DGRE\n"
+                        f"• **Méthode** : Interpolation spatiale géostatistique par Inverse Distance Weighting (IDW, $\\alpha=2.0$)\n"
+                        f"• **Réseau** : 148 stations pluviométriques de référence certifiées sous UTM 32N (EPSG:32632)\n\n"
+                        f"*(La carte officielle a été récupérée directement depuis l'annuaire et est affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                elif "saison" in img_url.lower():
+                    answer_text = (
+                        f"🍂❄️🌸☀️ **Cartes Pluviométriques Saisonnières ({year_val})**\n\n"
+                        f"Voici la répartition cartographique des précipitations par saison pour l'année **{year_val}** (Automne, Hiver, Printemps, Été).\n\n"
+                        f"• **Source** : Annuaire officiel de la DGRE\n"
+                        f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                elif any(k in img_url.lower() for k in ["normale", "anomalie"]):
+                    answer_text = (
+                        f"📊 **Carte d'Anomalie Pluviométrique / Rapport à la Normale ({year_val})**\n\n"
+                        f"Voici la carte d'écart par rapport à la normale cinquantenaire (1959–2009) pour l'année **{year_val}**, identifiant les zones de déficit et d'excédent hydrique.\n\n"
+                        f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                elif any(k in img_url.lower() for k in ["station", "reseau"]):
+                    answer_text = (
+                        f"📍 **Carte du Réseau des 148 Stations Nationales de Référence**\n\n"
+                        f"Voici la distribution spatiale des 148 stations pluviométriques de référence sur les 24 gouvernorats de la Tunisie.\n\n"
+                        f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                elif "region" in img_url.lower():
+                    answer_text = (
+                        f"🗺️ **Carte des Régions Naturelles de la Tunisie**\n\n"
+                        f"Voici le découpage officiel de la Tunisie en 6 régions hydro-climatiques (Nord-Ouest, Nord-Est, Centre-Ouest, Centre-Est, Sud-Ouest, Sud-Est).\n\n"
+                        f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+                else:
+                    answer_text = (
+                        f"📈 **Figure Officielle de l'Annuaire Pluviométrique ({year_val})**\n\n"
+                        f"Voici la figure demandée extraite directement des archives officielles de la DGRE.\n\n"
+                        f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    )
+
+                result = {
+                    "answer": str(answer_text).strip(),
+                    "sources": ["Annuaire Pluviométrique Officiel DGRE"],
+                    "nb_passages": 1,
+                    "images": detected_images,
+                    "code": "",
+                    "table_html": None,
+                    "agent_traces": {
+                        "annuaire_rag_agent": {
+                            "mode": "official_preexisting_map",
+                            "image": detected_images[0]
+                        }
+                    }
+                }
+                _RESPONSE_CACHE[cache_key] = result
+                return result
 
         # 3. Si aucune carte statique officielle n'existe, solliciter l'Orchestrateur Multi-Agents LLM
         if is_visual_request and not detected_images and self.orchestrator:
@@ -157,7 +238,13 @@ class AnnuaireRAGAgent:
         if use_rag:
             passages = self.retrieve(question, entities, topk=12)
             sql_context = self.enrich_with_sql(question, entities)
-            table_html = self._generate_table_html(entities)
+            
+            # Ne générer la table HTML que si l'utilisateur demande explicitement un tableau, une liste ou des relevés
+            wants_table = any(k in question.lower() for k in [
+                "tableau", "table", "liste", "donnees", "données", "releve", "relevé",
+                "toutes les stations", "classement", "statistiques", "export", "csv"
+            ])
+            table_html = self._generate_table_html(entities, question) if wants_table else None
         else:
             passages = []
             sql_context = ""
@@ -165,76 +252,31 @@ class AnnuaireRAGAgent:
 
         sources = [p.get("doc_name", "annuaire_dgre") for p in passages] if passages else ["Annuaire Pluviométrique Officiel DGRE"]
 
-        # 5. Si une carte officielle d'annuaire a été détectée, RENDRE DIRECTEMENT SANS APPEL LLM
-        if detected_images and not generated_code:
-            year_val = entities["annees"][0] if entities["annees"] else 2020
-            scope_val = entities["gouvernorats"][0] if entities["gouvernorats"] else "la Tunisie entière"
-            img_url = detected_images[0]
+        # 6. Traitement standard via LLM pour les requêtes textuelles ou génération dynamique
+        has_map = len(detected_images) > 0
+        system_prompt, user_prompt, src_list = self._build_prompt(
+            question, passages, sql_context, has_map_image=has_map
+        )
+        if src_list:
+            sources = src_list
 
-            if any(k in img_url.lower() for k in ["carte_annuelle", "isohyete", "isohyetes"]):
+        answer_text = self._call_llm(system_prompt, user_prompt)
+        # Fallback intelligent si le LLM est indisponible mais que des données SQL/RAG existent
+        if not answer_text or "Erreur LLM" in answer_text:
+            if sql_context:
                 answer_text = (
-                    f"🗺️ **Carte Officielle des Isohyètes ({year_val}) — DGRE Tunisie**\n\n"
-                    f"Voici la carte officielle des isohyètes pour **{scope_val}** (Année hydrologique **{year_val}**).\n\n"
-                    f"• **Source** : Annuaire Pluviométrique Officiel de la DGRE\n"
-                    f"• **Méthode** : Interpolation spatiale géostatistique par Inverse Distance Weighting (IDW, $\\alpha=2.0$)\n"
-                    f"• **Réseau** : 148 stations pluviométriques de référence certifiées sous UTM 32N (EPSG:32632)\n\n"
-                    f"*(La carte officielle a été récupérée directement depuis l'annuaire et est affichée dans l'onglet **Rendu** ci-contre.)*"
-                )
-            elif "saison" in img_url.lower():
-                answer_text = (
-                    f"🍂❄️🌸☀️ **Cartes Pluviométriques Saisonnières ({year_val})**\n\n"
-                    f"Voici la répartition cartographique des précipitations par saison pour l'année **{year_val}** (Automne, Hiver, Printemps, Été).\n\n"
-                    f"• **Source** : Annuaire officiel de la DGRE\n"
-                    f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
-                )
-            elif any(k in img_url.lower() for k in ["normale", "anomalie"]):
-                answer_text = (
-                    f"📊 **Carte d'Anomalie Pluviométrique / Rapport à la Normale ({year_val})**\n\n"
-                    f"Voici la carte d'écart par rapport à la normale cinquantenaire (1959–2009) pour l'année **{year_val}**, identifiant les zones de déficit et d'excédent hydrique.\n\n"
-                    f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
-                )
-            elif any(k in img_url.lower() for k in ["station", "reseau"]):
-                answer_text = (
-                    f"📍 **Carte du Réseau des 148 Stations Nationales de Référence**\n\n"
-                    f"Voici la distribution spatiale des 148 stations pluviométriques de référence sur les 24 gouvernorats de la Tunisie.\n\n"
-                    f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
-                )
-            elif "region" in img_url.lower():
-                answer_text = (
-                    f"🗺️ **Carte des Régions Naturelles de la Tunisie**\n\n"
-                    f"Voici le découpage officiel de la Tunisie en 6 régions hydro-climatiques (Nord-Ouest, Nord-Est, Centre-Ouest, Centre-Est, Sud-Ouest, Sud-Est).\n\n"
-                    f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
+                    f"📊 **Données Pluviométriques Officielles (DGRE)**\n\n"
+                    f"Voici les données enregistrées extraites de la base PostgreSQL centrale :\n\n"
+                    f"{sql_context}\n\n"
+                    f"*(Données issues des stations de référence de la DGRE.)*"
                 )
             else:
-                answer_text = (
-                    f"📈 **Figure Officielle de l'Annuaire Pluviométrique ({year_val})**\n\n"
-                    f"Voici la figure demandée extraite directement des archives officielles de la DGRE.\n\n"
-                    f"*(Affichée dans l'onglet **Rendu** ci-contre.)*"
-                )
-        else:
-            # 6. Traitement standard via LLM pour les requêtes textuelles ou génération dynamique
-            has_map = len(detected_images) > 0
-            system_prompt, user_prompt, src_list = self._build_prompt(
-                question, passages, sql_context, has_map_image=has_map
-            )
-            if src_list:
-                sources = src_list
+                answer_text = "Voici les informations pluviométriques extraites de la base de données de la DGRE."
 
-            answer_text = self._call_llm(system_prompt, user_prompt)
-            # Fallback intelligent si le LLM est indisponible mais que des données SQL/RAG existent
-            if not answer_text or "Erreur LLM" in answer_text:
-                if sql_context:
-                    answer_text = (
-                        f"📊 **Données Pluviométriques Officielles (DGRE)**\n\n"
-                        f"Voici les données enregistrées extraites de la base PostgreSQL centrale :\n\n"
-                        f"{sql_context}\n\n"
-                        f"*(Données issues des stations de référence de la DGRE.)*"
-                    )
-                else:
-                    answer_text = "Voici les informations pluviométriques extraites de la base de données de la DGRE."
-
-            if generated_code:
-                answer_text = f"{answer_text}\n\n```python\n{generated_code}\n```"
+        # Le code généré est retourné séparément dans data["code"] pour l'onglet 'Code Python' de l'UI
+        # Nettoyer d'éventuels blocs de code Python bruts dans la réponse de chat textuelle
+        if "```python" in answer_text:
+            answer_text = re.sub(r'```python[\s\S]*?```', '', answer_text).strip()
 
         agent_traces = {
             "annuaire_rag_agent": {
@@ -246,7 +288,7 @@ class AnnuaireRAGAgent:
         if gen_map_traces:
             agent_traces.update(gen_map_traces)
 
-        return {
+        result = {
             "answer": str(answer_text).strip(),
             "sources": list(set(sources)),
             "nb_passages": len(passages),
@@ -254,7 +296,9 @@ class AnnuaireRAGAgent:
             "code": generated_code,
             "table_html": table_html,
             "agent_traces": agent_traces
-        } 
+        }
+        _RESPONSE_CACHE[cache_key] = result
+        return result
 
     def _get_connection(self):
         return psycopg2.connect(self.database_url)
@@ -379,6 +423,9 @@ class AnnuaireRAGAgent:
 
     def enrich_with_sql(self, question: str, entities: Dict[str, Any] = None) -> str:
         """Exécute des requêtes SQL ciblées sur station_148 et pluies_148."""
+        import warnings
+        warnings.filterwarnings('ignore', message='.*pandas only supports SQLAlchemy.*')
+
         if entities is None:
             entities = self._detect_entities(question)
 
@@ -387,6 +434,60 @@ class AnnuaireRAGAgent:
 
         try:
             conn = self._get_connection()
+
+            # ── 0. Recherche ciblée pour Classements / Top Stations / Records ──
+            q_lower = question.lower()
+            is_ranking = any(kw in q_lower for kw in [
+                "top", "classement", "classer", "plus arros", "plus pluvieu",
+                "moins arros", "moins pluvieu", "maximum", "max", "record", "minimum", "min"
+            ])
+            if is_ranking:
+                try:
+                    top_match = re.search(r'\btop\s*(\d+)\b', q_lower)
+                    limit_val = int(top_match.group(1)) if top_match else 10
+                    limit_val = max(1, min(limit_val, 50))
+                    
+                    is_asc = any(kw in q_lower for kw in ["moins arros", "moins pluvieu", "minimum", "min", "plus sec", "plus seche"])
+                    order_dir = "ASC" if is_asc else "DESC"
+                    order_label = "les moins arrosées" if is_asc else "les plus arrosées"
+
+                    where_clauses = []
+                    params_ranking = []
+                    if entities["annees"]:
+                        placeholders = ", ".join(["%s"] * len(entities["annees"]))
+                        where_clauses.append(f"EXTRACT(YEAR FROM p.date_obs) IN ({placeholders})")
+                        params_ranking.extend(entities["annees"])
+                    if entities["gouvernorats"]:
+                        placeholders_g = " OR ".join(["LOWER(s.gouvernorat) LIKE %s"] * len(entities["gouvernorats"]))
+                        where_clauses.append(f"({placeholders_g})")
+                        params_ranking.extend([f"%{g.lower()}%" for g in entities["gouvernorats"]])
+
+                    where_str = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+                    
+                    query_ranking = f"""
+                        SELECT s.nom, s.gouvernorat,
+                               EXTRACT(YEAR FROM p.date_obs)::int AS annee,
+                               ROUND(SUM(p.valeur_mm)::numeric, 1) AS total_mm
+                        FROM pluies_148 p
+                        JOIN station_148 s ON p.id_station = s.id_station
+                        {where_str}
+                        GROUP BY s.id_station, s.nom, s.gouvernorat, EXTRACT(YEAR FROM p.date_obs)
+                        ORDER BY total_mm {order_dir}
+                        LIMIT {limit_val}
+                    """
+                    df_rank = pd.read_sql(query_ranking, conn, params=params_ranking if params_ranking else None)
+                    if not df_rank.empty:
+                        year_str = f" en {entities['annees'][0]}" if entities["annees"] else ""
+                        lines = [
+                            f"  {idx+1}. Station **{row['nom']}** ({row['gouvernorat']}) : **{row['total_mm']} mm** (Année {row['annee']})"
+                            for idx, (_, row) in enumerate(df_rank.iterrows())
+                        ]
+                        extra_context.append(
+                            f"Classement officiel des {len(df_rank)} stations {order_label}{year_str} (Source PostgreSQL) :\n"
+                            + "\n".join(lines)
+                        )
+                except Exception as e_rank:
+                    print(f"[AnnuaireRAG] Erreur SQL ranking: {e_rank}")
 
             # ── 1. Recherche directe par Station ──────────────────────────────
             for st in entities["stations"]:
@@ -499,6 +600,11 @@ class AnnuaireRAGAgent:
                     if entities["annees"]:
                         where_conds.append(f"EXTRACT(YEAR FROM p.date_obs) IN ({','.join(['%s']*len(entities['annees']))})")
                         params_fb.extend(entities["annees"])
+                    else:
+                        # OPTIMISATION: Limiter à l'année la plus récente si aucune année n'est spécifiée
+                        # pour éviter un full-scan (calcul sur tout l'historique) qui provoque une énorme latence.
+                        where_conds.append("EXTRACT(YEAR FROM p.date_obs) = (SELECT MAX(EXTRACT(YEAR FROM date_obs)) FROM pluies_148)")
+
                     if entities["mois"]:
                         where_conds.append(f"EXTRACT(MONTH FROM p.date_obs) IN ({','.join(['%s']*len(entities['mois']))})")
                         params_fb.extend(entities["mois"])
@@ -551,10 +657,63 @@ class AnnuaireRAGAgent:
 
     # ── Génération de la table HTML ────────────────────────────────────────────
 
-    def _generate_table_html(self, entities: Dict[str, Any]) -> Optional[str]:
-        """Génère toujours une table HTML pertinente depuis station_148 et pluies_148."""
+    def _generate_table_html(self, entities: Dict[str, Any], question: str = "") -> Optional[str]:
+        """Génère une table HTML pertinente depuis station_148 et pluies_148, adaptée au classement ou filtre demandé."""
         try:
             conn = self._get_connection()
+            q_lower = (question or "").lower()
+
+            # ── 1. Cas Spécial : Classement / Top N Stations ────────────────
+            is_ranking = any(kw in q_lower for kw in [
+                "top", "classement", "classer", "plus arros", "plus pluvieu",
+                "moins arros", "moins pluvieu", "maximum", "max", "record", "minimum", "min"
+            ])
+            if is_ranking:
+                top_match = re.search(r'\btop\s*(\d+)\b', q_lower)
+                limit_val = int(top_match.group(1)) if top_match else 10
+                limit_val = max(1, min(limit_val, 50))
+
+                is_asc = any(kw in q_lower for kw in ["moins arros", "moins pluvieu", "minimum", "min", "plus sec", "plus seche"])
+                order_dir = "ASC" if is_asc else "DESC"
+
+                where_clauses = []
+                params = []
+                if entities.get("annees"):
+                    placeholders = ", ".join(["%s"] * len(entities["annees"]))
+                    where_clauses.append(f"EXTRACT(YEAR FROM p.date_obs) IN ({placeholders})")
+                    params.extend(entities["annees"])
+                if entities.get("mois"):
+                    placeholders_m = ", ".join(["%s"] * len(entities["mois"]))
+                    where_clauses.append(f"EXTRACT(MONTH FROM p.date_obs) IN ({placeholders_m})")
+                    params.extend(entities["mois"])
+                if entities.get("gouvernorats"):
+                    placeholders_g = " OR ".join(["LOWER(s.gouvernorat) LIKE %s"] * len(entities["gouvernorats"]))
+                    where_clauses.append(f"({placeholders_g})")
+                    params.extend([f"%{g.lower()}%" for g in entities["gouvernorats"]])
+
+                where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+                query_tbl = f"""
+                    SELECT
+                        ROW_NUMBER() OVER (ORDER BY SUM(p.valeur_mm) {order_dir}) AS "Rang",
+                        s.nom AS "Station",
+                        s.gouvernorat AS "Gouvernorat",
+                        EXTRACT(YEAR FROM p.date_obs)::int AS "Année",
+                        ROUND(SUM(p.valeur_mm)::numeric, 1) AS "Cumul (mm)"
+                    FROM pluies_148 p
+                    JOIN station_148 s ON p.id_station = s.id_station
+                    {where_sql}
+                    GROUP BY s.id_station, s.nom, s.gouvernorat, EXTRACT(YEAR FROM p.date_obs)
+                    ORDER BY "Rang" ASC
+                    LIMIT {limit_val}
+                """
+                df_table = pd.read_sql(query_tbl, conn, params=params if params else None)
+                conn.close()
+                if not df_table.empty:
+                    return df_table.to_html(classes="data-table", index=False, border=0)
+                return None
+
+            # ── 2. Cas Général Filtré ─────────────────────────────────────────
             where_clauses = []
             params = []
 
@@ -611,6 +770,7 @@ class AnnuaireRAGAgent:
                 """
                 df_table = pd.read_sql(query_tbl, conn)
             else:
+                # Prioriser les cumuls les plus significatifs
                 query_tbl = f"""
                     SELECT
                         s.gouvernorat AS "Gouvernorat",
@@ -621,8 +781,8 @@ class AnnuaireRAGAgent:
                     JOIN station_148 s ON p.id_station = s.id_station
                     {where_sql}
                     GROUP BY s.gouvernorat, s.nom, EXTRACT(YEAR FROM p.date_obs)
-                    ORDER BY "Gouvernorat", "Station", "Année"
-                    LIMIT 300
+                    ORDER BY "Cumul (mm)" DESC, "Gouvernorat", "Station"
+                    LIMIT 100
                 """
                 df_table = pd.read_sql(query_tbl, conn, params=params if params else None)
 
@@ -709,10 +869,12 @@ class AnnuaireRAGAgent:
         }
 
         # Attribution prioritaire rigoureuse
-        if is_regions:
+        if entities["mois"] and any(w in q_norm for w in ["carte", "map", "pluie", "pluies", "isohyete", "isohyetes", "mois", "janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"]):
+            m = entities["mois"][0]
+            if m in mois_files:
+                needed_files.append(mois_files[m])
+        elif is_regions:
             needed_files.append("regions_naturelles_tunisie.png")
-        elif is_annual_isohyet and not (is_seasons_all or is_automne or is_hiver or is_printemps or is_ete or is_anomalie):
-            needed_files.append("carte_annuelle.png")
         elif is_seasons_all:
             needed_files.append("carte_saisons_subplots.png")
         elif is_automne:
@@ -729,10 +891,6 @@ class AnnuaireRAGAgent:
             needed_files.append("carte_interannuelle.png")
         elif is_stations:
             needed_files.append("carte_stations.png")
-        elif entities["mois"] and any(w in q_norm for w in ["carte", "mois", "isohyete"]):
-            m = entities["mois"][0]
-            if m in mois_files:
-                needed_files.append(mois_files[m])
         elif is_annual_isohyet:
             needed_files.append("carte_annuelle.png")
         elif any(w in q_norm for w in ["pie", "camembert", "repartition"]):
@@ -806,15 +964,19 @@ class AnnuaireRAGAgent:
         system_prompt = (
             "Tu es l'assistant IA officiel expert pour les ressources en eau et la pluviométrie de la Tunisie (DGRE).\n"
             "DIRECTIVES UNIVERSELLES ET IMPÉRATIVES DE FORMAT :\n"
-            "1. CAS DEMANDE DE CARTE OU GRAPHIQUE VISUEL (IMAGE PRÉSENTE OU GÉNÉRÉE) :\n"
+            "1. CAS CLASSEMENT / TOP STATIONS / RECORDS PLUVIOMÉTRIQUES :\n"
+            "   - Si la question demande un classement (ex: 'top 10', 'plus arrosées', 'moins arrosées', 'classement', 'palmarès') : liste explicitement chaque station dans l'ordre avec son rang, son nom, son gouvernorat et son cumul exact en mm (ex: '1. Station Ain Draham (Jendouba) : 1873.0 mm').\n"
+            "   - Présente toujours ces données sous forme de liste numérotée claire ou de tableau Markdown bien aligné.\n"
+            "2. CAS DEMANDE DE CARTE OU GRAPHIQUE VISUEL (IMAGE PRÉSENTE OU GÉNÉRÉE) :\n"
             "   - Si la demande concerne les régions naturelles ou le découpage territorial : démarre par 'Voici la carte des régions naturelles demandée :' et résume brièvement les 6 régions officielles DGRE (Nord-Ouest, Nord-Est, Centre-Ouest, Centre-Est, Sud-Ouest, Sud-Est).\n"
-            "   - Si la demande concerne la pluviométrie / isohyètes : démarre par 'Voici la carte des isohyètes / le graphique pluviométrique demandé :' et donne une synthèse globale synthétique de 2 à 3 lignes (cumul moyen national/régional, gouvernorat le plus arrosé, gouvernorat le moins arrosé).\n"
-            "   - INTERDICTION ABSOLUE de lister les stations individuelles une par une (pas de '- Station X - 2020: Y mm').\n"
-            "2. CAS DEMANDE DE DONNÉES / SYNTHÈSE EN LANGAGE NATUREL :\n"
+            "   - Si la demande concerne la pluviométrie globale / isohyètes sans demande de top : démarre par 'Voici la carte des isohyètes / le graphique pluviométrique demandé :' et donne une synthèse globale de 2 à 3 lignes (cumul moyen national/régional, gouvernorat le plus arrosé, gouvernorat le moins arrosé), sans énumérer les 148 stations.\n"
+            "3. CAS DEMANDE DE DONNÉES / SYNTHÈSE EN LANGAGE NATUREL :\n"
             "   - Démarre par une courte phrase d'introduction.\n"
-            "   - Donne les informations directement sous forme de puces synthétiques (bullet points).\n"
+            "   - Donne les informations directement sous forme de puces synthétiques ou de tableau Markdown.\n"
             "   - Reste ultra-concis, direct et précis (exprime toujours les précipitations en mm).\n"
-            "3. RÈGLE DES SOURCES ET CONFLITS :\n"
+            "4. RÈGLE STRICTE SUR LE CODE :\n"
+            "   - INTERDICTION ABSOLUE de générer du code Python, du script SQL ou des blocs de code dans ta réponse de chat. Réponds UNIQUEMENT en texte rédigé et formaté en Markdown direct pour l'utilisateur.\n"
+            "5. RÈGLE DES SOURCES ET CONFLITS :\n"
             "   - S'il y a des données '=== DONNÉES TEMPS RÉEL (PostgreSQL) ===', utilise-les prioritairement pour les chiffres exacts.\n"
             "   - S'il y a des données '=== DONNÉES INDEXÉES (Zvec) ===', utilise-les pour enrichir l'explication historique.\n"
             "   - En l'absence de données RAG ou SQL, réponds de manière autonome avec une grande précision métier."
