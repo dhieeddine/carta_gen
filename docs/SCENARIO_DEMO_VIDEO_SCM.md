@@ -134,3 +134,4 @@ $PYTHON = "D:\Desktop\stage_dgre\carta_gen\venv\Scripts\python.exe"
 # Validation Complète des Tests :
 & $PYTHON -m unittest tests/test_scm_features.py tests/test_security_validator.py tests/test_sql_sanitizer.py
 ```
+

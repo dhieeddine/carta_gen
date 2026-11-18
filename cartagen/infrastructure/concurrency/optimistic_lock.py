@@ -122,3 +122,4 @@ class OptimisticLockManager:
 
 # Instance Singleton du gestionnaire de concurrence optimiste
 optimistic_lock_manager = OptimisticLockManager()
+

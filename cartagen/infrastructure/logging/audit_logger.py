@@ -66,3 +66,4 @@ class AuditLogger:
             print(f"[AuditLogger] Erreur d'écriture audit : {e}")
 
         return entry
+

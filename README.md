@@ -1,276 +1,282 @@
-# CartaGen - DGRE (Direction Générale des Ressources en Eau)
+# Rainfall CartaGen — Plateforme Hydrologique & Cartographique DGRE
 
-CartaGen est une plateforme multi-agents d'analyse hydrologique et de cartographie automatisée conçue pour la Direction Générale des Ressources en Eau (**DGRE**) du Ministère de l'Agriculture, des Ressources Hydrauliques et de la Pêche de Tunisie.
+[![CI/CD SCM Pipeline](https://github.com/dhieeddine/carta_gen/actions/workflows/ci.yml/badge.svg)](https://github.com/dhieeddine/carta_gen/actions/workflows/ci.yml)
+[![SemVer 2.0.0](https://img.shields.io/badge/SemVer-1.2.0-blue.svg)](https://semver.org/spec/v2.0.0.html)
+[![SCM Standard](https://img.shields.io/badge/SCM_Standard-IEEE_828_%7C_ISO_12207-green.svg)](docs/RAPPORT_ARCHITECTURE_SCM_SUJET10.md)
+[![Tests Passing](https://img.shields.io/badge/Tests-26%2F26%20Passing%20(100%25)-brightgreen.svg)](tests/test_scm_features.py)
+[![Database Migrations](https://img.shields.io/badge/Alembic-Reversible_Migrations-orange.svg)](alembic.ini)
+[![Audit Integrity](https://img.shields.io/badge/Audit_Trail-SHA--256_Checksum-purple.svg)](cartagen/infrastructure/logging/audit_logger.py)
 
-Elle permet d'interroger en langage naturel, d'analyser, de cartographier par interpolation spatiale et d'éditer automatiquement les annuaires pluviométriques officiels de la République Tunisienne.
+**Rainfall CartaGen** est une plateforme hydrologique et géospatiale intelligente développée pour la Direction Générale des Ressources en Eau (DGRE - Ministère de l'Agriculture, Tunisie), combinant une architecture logicielle hexagonale, un système multi-agents autonome, un modèle de langage fine-tuné (QLoRA) et un RAG vectoriel géospatial sous PostgreSQL/PostGIS. Conçue pour remplacer un processus manuel historique de 7 à 8 mois, elle automatise l'exploitation des données pluviométriques des 148 stations nationales de référence, assurant l'interrogation en langage naturel, la génération dynamique de cartes thématiques 300 DPI (isohyètes annuelles, panneaux 4 saisons, anomalies par rapport à la normale 50 ans), l'ingestion automatisée des bases historiques Microsoft Access (.mdb) et la compilation complète des Annuaires Pluviométriques nationaux en formats bimodaux Word (.docx) et PDF en moins de 3 minutes par campagne.
 
 ---
 
-## 🏛️ Architecture du Système
+## 🏛️ Gestion de la Configuration Logicielle (SCM — Sujet 10)
 
-L'application repose sur les principes de la **Clean Architecture (Hexagonale)** avec un système multi-agents collaboratif orchestré selon le modèle **Supervisor Pattern**, couplé à un RAG sémantique in-process et une sandbox d'exécution sécurisée.
+Cette plateforme intègre une implémentation complète et rigoureuse des standards de **Gestion de la Configuration Logicielle (SCM)** conformes aux normes **IEEE 828** et **ISO/IEC 12207** articulée autour de 3 volets fondamentaux :
 
 ```mermaid
-graph TD
-    A[Utilisateur : Interface Web / API REST / CLI] --> B[FastAPI / CORS Sécurisé]
-    B --> C[Orchestrateur Multi-Agents]
-    
-    subgraph RAG & Contexte Sémantique
-        C --> D[Zvec Vector Manager]
-        D -->|Similarité Cosinus + Score Cutoff| E[Métadonnées Stations & Schémas]
+flowchart LR
+    subgraph SCM["Gestion de la Configuration Logicielle (SCM)"]
+        direction TB
+        V1["Volet 1 : Journalisation Avancée<br>• Structured JSON Logging<br>• Correlation ID (X-Request-ID)<br>• Masquage des Secrets<br>• Audit Trail SHA-256"]
+        V2["Volet 2 : Gestion des Versions<br>• SemVer 2.0.0 (v1.2.0)<br>• Migrations Alembic bidirectionnelles<br>• Pipeline CI/CD GitHub Actions<br>• Tags Git & Releases"]
+        V3["Volet 3 : Gestion des Conflits<br>• Contrôle de Concurrence Optimiste (OCC - HTTP 409)<br>• Mutex Applicatif Pessimiste<br>• Résolution 3-Way Merge (git_conflict_lab.py)"]
     end
-
-    subgraph Agent SQL
-        C --> F[SQLGeneratorAgent]
-        F -->|Sanitisation SQL & Whitelist| G[Parseur Déterministe / ProviderManager]
-        G -->|PostgreSQL / PostGIS Paramétré| H[(Base de Données unifiée : dgre_db)]
-    end
-
-    subgraph Agent SIG & Templates
-        C --> I[SIGGeneratorAgent]
-        I -->|ProviderManager LLM| J[Génération du Code]
-        J --> K[Skeleton Loader LRU Cache]
-        K -->|Templates .py.template| L[Squelettes Spécialisés : IDW, Thiessen, Anomalies, etc.]
-    end
-
-    subgraph Sandbox Sécurisée
-        L --> M[CodeSecurityValidator : Analyse AST]
-        M -->|Code Validé| N[Exécution Isolée en Sous-processus]
-        M -->|Code Rejeté : Import/Appel Suspect| O[Blocage Immédiat]
-        N -->|Erreur d'Exécution| P[Boucle d'Auto-Correction LLM]
-        P --> I
-    end
-
-    subgraph Sorties & Publication
-        N -->|Succès| Q[Cartes Isohyètes PNG 300 DPI]
-        N -->|Succès| R[Tableaux Statistiques HTML/DataFrames]
-        N -->|Succès| S[Annuaires Officiels PDF DGRE]
-    end
+    SCM --> CartaGen["Rainfall CartaGen (DGRE)"]
 ```
 
----
+| Volet SCM | Implémentation Architecturale & Composants | Localisation dans le Dépôt |
+| :--- | :--- | :--- |
+| **Volet 1 : Journalisation Avancée** | • **Structured JSON Logger** avec horodatage ISO 8601 et contexte agent.<br>• **Middleware ASGI Correlation ID** propageant `X-Request-ID` via `ContextVar`.<br>• **Filtre regex de masquage** automatique des clés sensibles (`HF_TOKEN`, mots de passe).<br>• **Piste d'Audit immuable** (`logs/audit_trail.jsonl`) signée par **empreinte SHA-256 déterministe**. | [`cartagen/infrastructure/logging/`](cartagen/infrastructure/logging/)<br>[`cartagen/infrastructure/logging/audit_logger.py`](cartagen/infrastructure/logging/audit_logger.py)<br>[`cartagen/infrastructure/logging/middleware.py`](cartagen/infrastructure/logging/middleware.py) |
+| **Volet 2 : Gestion des Versions** | • **Semantic Versioning 2.0.0** (`cartagen/version.py`, endpoint `GET /api/v1/version`).<br>• **Versioning du schéma PostgreSQL/PostGIS** avec migrations Alembic réversibles (`upgrade`/`downgrade`).<br>• **Tags Git & GitHub Releases** (`v1.2.0`).<br>• **Pipeline CI/CD GitHub Actions** automatisant linting, migrations, tests et dry-run Docker. | [`cartagen/version.py`](cartagen/version.py)<br>[`alembic.ini`](alembic.ini)<br>[`cartagen/infrastructure/database/migrations/`](cartagen/infrastructure/database/migrations/)<br>[`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| **Volet 3 : Gestion des Conflits** | • **Optimistic Concurrency Control (OCC)** : détection du *Lost Update* via `version_id` et rejet avec statut **HTTP 409 Conflict**.<br>• **Mutex Applicatif Pessimiste** (`TaskMutexManager`) protégeant les traitements longs (compilation annuaire).<br>• **Simulateur de Conflits Git** interactif démontrant le *3-Way Merge* et sa résolution. | [`cartagen/infrastructure/concurrency/optimistic_lock.py`](cartagen/infrastructure/concurrency/optimistic_lock.py)<br>[`cartagen/infrastructure/concurrency/pessimistic_lock.py`](cartagen/infrastructure/concurrency/pessimistic_lock.py)<br>[`git_conflict_lab.py`](git_conflict_lab.py) |
 
-## 📁 Organisation du Code Source
-
-```
-carta_gen/
-├── cartagen/
-│   ├── domain/                               # Couche Métier / Domaine
-│   │   ├── __init__.py
-│   │   └── models/
-│   │       ├── __init__.py
-│   │       └── map_request.py                # Modèles de données (MapRequest, ExecutionResult, etc.)
-│   │
-│   └── infrastructure/                       # Couche Infrastructure
-│       ├── __init__.py
-│       ├── config.py                         # Configuration centralisée Pydantic BaseSettings
-│       ├── agents/                           # Agents Spécialisés
-│       │   ├── __init__.py
-│       │   ├── orchestrator.py               # Orchestrateur central multi-agents
-│       │   ├── sql_generator_agent.py        # Agent Text-to-SQL sécurisé
-│       │   ├── sig_generator_agent.py        # Agent de génération de code SIG & cartographie
-│       │   ├── annuaire_rag_agent.py         # Agent de génération des annuaires officiels
-│       │   └── skeletons/                    # Squelettes de code géospatial modulaires
-│       │       ├── __init__.py
-│       │       ├── skeleton_loader.py        # Chargeur centralisé avec cache LRU
-│       │       ├── mono.py.template          # Carte isohyète standard (IDW national)
-│       │       ├── analysis.py.template      # Carte avec tableau d'analyse statistique
-│       │       ├── single_gouv.py.template   # Zoom et découpage par gouvernorat
-│       │       ├── compare_gouv.py.template  # Comparaison spatiale multi-gouvernorats
-│       │       ├── region_hydro.py.template  # Découpage par région hydrographique
-│       │       ├── difference.py.template    # Carte différentielle (Année N - Année N-1)
-│       │       ├── anomalie.py.template      # Rapport aux normales climatiques (%)
-│       │       ├── stations_density.py.template # Densité et maillage des stations
-│       │       └── region_naturelle.py.template # Synthèse des 6 régions naturelles
-│       │
-│       ├── api/                              # Exposition HTTP (FastAPI)
-│       │   ├── __init__.py
-│       │   ├── app.py                        # Routes API REST, WebSocket, middleware CORS
-│       │   └── static/                       # Interface Frontend Web (HTML5/CSS3/Vanilla JS)
-│       │
-│       ├── database/                         # Persistance et Accès Données
-│       │   ├── __init__.py
-│       │   ├── postgres_connection.py        # Pool de connexions PostgreSQL/PostGIS sécurisé
-│       │   ├── annuaire_indexer.py           # Indexeur vectoriel des annuaires
-│       │   └── vector_manager.py             # Moteur vectoriel Zvec in-process
-│       │
-│       ├── logging/                          # Observabilité et Logging
-│       │   ├── __init__.py
-│       │   └── logger.py                     # Logger structuré avec rotation de fichiers (RotatingFileHandler)
-│       │
-│       ├── providers/                        # Fournisseurs d'IA (LLM)
-│       │   ├── __init__.py
-│       │   └── provider_manager.py           # Gestionnaire unifié (Groq, OpenAI, OpenRouter, Ollama, Colab, Local)
-│       │
-│       └── sandbox/                          # Environnement d'Exécution Isolé
-│           ├── __init__.py
-│           └── sandbox_manager.py            # Sandbox avec CodeSecurityValidator (AST)
-│
-├── tests/                                    # Suite de Tests Automatisés
-│   ├── __init__.py
-│   ├── test_sql_sanitizer.py                 # Tests de sanitisation et protection SQL injection
-│   ├── test_security_validator.py            # Tests de l'analyse statique AST du Sandbox
-│   ├── test_skeleton_loader.py               # Tests de chargement et conformité des squelettes
-│   └── test_config.py                        # Tests de validation de la configuration Pydantic
-│
-├── run_app.py                                # Script de démarrage de l'application Web
-├── generer_annuaire_database.py              # Générateur CLI d'annuaires officiels DGRE (PDF)
-├── requirements.txt                          # Dépendances Python
-└── .env.example                              # Modèle de configuration des variables d'environnement
-```
+### 📚 Dossiers & Guides SCM Documentaires
+- 📄 **Rapport Académique Complet :** [`docs/RAPPORT_ARCHITECTURE_SCM_SUJET10.md`](docs/RAPPORT_ARCHITECTURE_SCM_SUJET10.md)
+- 🧪 **Protocole de Vérification Manuelle Pas-à-Pas :** [`docs/GUIDE_VERIFICATION_MANUELLE_SCM.md`](docs/GUIDE_VERIFICATION_MANUELLE_SCM.md)
+- 🎬 **Scénario & Script de Tournage Démo Vidéo :** [`docs/SCENARIO_DEMO_VIDEO_SCM.md`](docs/SCENARIO_DEMO_VIDEO_SCM.md)
+- 🧪 **Suite de Tests SCM Automatisés (26 tests, 100% succès) :** [`tests/test_scm_features.py`](tests/test_scm_features.py)
 
 ---
 
-## 🔒 Sécurité & Robustesse
+---
 
-L'application intègre des mécanismes de défense en profondeur à chaque étape du pipeline :
+## Quick Start (Démarrage Rapide)
 
-1. **Validation Statique du Code (Analyse AST)** :
-   * Avant toute exécution dans la Sandbox, le code Python généré par le LLM est inspecté par `CodeSecurityValidator`.
-   * **Modules bloqués** : `subprocess`, `socket`, `shutil`, `http`, `urllib`, `ctypes`, etc.
-   * **Fonctions et appels bloqués** : `eval`, `exec`, `__import__`, `globals`, `locals`, `os.system`, `os.popen`, `os.remove`, etc.
-2. **Protection contre l'Injection SQL** :
-   * Nettoyage strict via `_sanitize_sql_string` (suppression des marqueurs `--`, échappement standard des guillemets `''`).
-   * Liste blanche pour les entités spatiales (`GOUVERNORATS_MAP`).
-   * Requêtes d'introspection de schémas paramétrées (`%s`).
-3. **Contrôle des Origines (CORS)** :
-   * Origines restreintes et configurables via `ALLOWED_ORIGINS` dans `.env` (par défaut `http://localhost:8000`).
-   * Restriction stricte aux méthodes nécessaires (`GET`, `POST`).
-4. **Isolation de la Sandbox** :
-   * Répertoire d'exécution temporaire dédié par requête.
-   * Nettoyage automatique des fichiers résiduels après exécution.
+### Option 1 : Lancement Local (Python)
+
+1. **Cloner le projet et créer l'environnement virtuel :**
+   ```bash
+   cd carta_gen
+   python -m venv venv
+   ```
+   - Sur Windows : `.\venv\Scripts\activate`
+   - Sur Linux / macOS : `source venv/bin/activate`
+
+2. **Installer les dépendances :**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Initialiser la configuration :**
+   ```bash
+   cp .env.example .env
+   # Renseignez vos clés API (GROQ_API_KEY ou OPENAI_API_KEY) et votre connexion DATABASE_URL dans .env
+   ```
+
+4. **Lancer le serveur :**
+   ```bash
+   python run_app.py
+   ```
+   L'application est accessible sur : **http://localhost:8000** (Swagger UI sur **http://localhost:8000/docs**).
 
 ---
 
-## ⚙️ Modulaire & Haute Performance
+### Option 2 : Lancement Conteneurisé (Docker Compose)
 
-- **Squelettes de Code Modulaires (`skeletons/`)** : Les modèles de génération SIG sont extraits dans des fichiers `.py.template` indépendants, chargés à la demande et conservés en mémoire via un cache LRU (`@lru_cache`).
-- **Fournisseur LLM Unifié (`ProviderManager`)** : Prise en charge native et transparente de multiples fournisseurs :
-  - **Cloud ultra-rapide** : Groq (`llama-3.3-70b-versatile`), OpenRouter (`meta-llama/llama-3.1-8b-instruct`), OpenAI (`gpt-4o-mini`).
-  - **Modèles Fine-Tunés / Locaux** : Google Colab (vLLM/FastAPI), Ollama local (`CartaGen_LoRA_SQL_SIG`), GPU Kaggle ou exécution PyTorch locale 4-bit (`VisCoder2-7B`).
-- **Logging Structuré** : Rotation automatique des logs (`cartagen.log`, max 5 Mo, 3 backups) et double sortie console standardisée.
-- **Configuration Typée** : Validation Pydantic `BaseSettings` au démarrage pour interdire les configurations invalides.
+Démarre l'application FastAPI ainsi que la base de données PostgreSQL/PostGIS 15 dans des conteneurs isolés avec volumes persistants :
 
----
-
-## 🛠️ Fonctionnalités Métier (DGRE)
-
-### 1. Cartographie Spatiale & Isohyètes
-* **Interpolation IDW (Inverse Distance Weighting)** vectorisée sur grille fine.
-* Découpage et masquage spatial précis sur les polygones nationaux et gouvernoraux en **UTM 32N (EPSG:32632)**.
-* Échelles de couleurs officielles de la DGRE adaptées à chaque pas de temps (journalier, mensuel, saisonnier, annuel).
-* Cartes d'anomalies pluviométriques par rapport aux normales climatiques interannuelles.
-
-### 2. Analyse Hydrologique & Synthèses Statistiques
-* Calcul des hauteurs de précipitations régionales par la méthode d'intégration spatiale des **Polygones de Thiessen (Voronoi)** pondérés par surface d'influence.
-* Calcul de la lame d'eau nationale (TUNISIE) pondérée par la superficie des 6 régions naturelles :
-  $$\text{Nord Ouest}, \quad \text{Nord Est}, \quad \text{Centre Ouest}, \quad \text{Centre Est}, \quad \text{Sud Ouest}, \quad \text{Sud Est}$$
-* Calculs d'écarts absolus (mm) et relatifs (%), et des rapports à la normale climatiques (%).
-
-### 3. Édition des Annuaires Pluviométriques Officiels (LaTeX / PDF)
-* Génération automatisée de l'annuaire national ou régional complet conforme aux normes de publication de la DGRE :
-  - Page de garde officielle avec armoiries et mentions légales.
-  - Avant-propos institutionnel et description du réseau d'observation (148 stations).
-  - Tableau 1 (synthèse régionale) et Tableau 2 (historique sur 8 ans avec détection des lacunes).
-  - Cartographie couleur intégrée et fiches mensuelles détaillées par station.
-
----
-
-## 🚀 Installation & Démarrage
-
-### 1. Cloner le dépôt et configurer l'environnement
 ```bash
-git clone https://github.com/dhieeddine/carta_gen.git
-cd carta_gen
-
-# Créer un environnement virtuel
-python -m venv venv
-venv\Scripts\activate   # Sous Windows
-# source venv/bin/activate # Sous Linux/macOS
-
-# Installer les dépendances
-pip install -r requirements.txt
+docker compose up -d --build
 ```
-
-### 2. Configuration du fichier `.env`
-Copiez le modèle et renseignez vos paramètres de base de données et clés API :
-```bash
-cp .env.example .env
-```
-
-Variables clés du fichier `.env` :
-```ini
-# Base de données PostgreSQL / PostGIS
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dgre_db
-
-# Fournisseur LLM actif (openrouter, groq, openai, ollama, colab)
-LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=votre_cle_ici
-GROQ_API_KEY=votre_cle_ici
-OPENAI_API_KEY=votre_cle_ici
-
-# Sécurité & Serveur
-ALLOWED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
-LOG_LEVEL=INFO
-```
-
-### 3. Exécuter les tests unitaires
-L'application dispose d'une suite de tests automatisés couvrant les couches critiques :
-```bash
-python -m unittest discover -s tests -v
-```
-
-### 4. Lancer le serveur Web
-```bash
-python run_app.py
-```
-L'interface de bord est accessible sur **`http://localhost:8000/`**.
-
-### 5. Générer un annuaire officiel en ligne de commande
-```bash
-# Annuaire national pour l'année 2018-2019
-python generer_annuaire_database.py --year 2018 --gouv all --output Annuaire_National_2018_2019.pdf
-
-# Annuaire régional (ex: Gouvernorat de Béja)
-python generer_annuaire_database.py --year 2021 --gouv Beja --output Annuaire_Beja_2021_2022.pdf
-```
+- Serveur Web & API : **http://localhost:8000**
+- Base PostgreSQL / PostGIS : **localhost:5432**
 
 ---
 
-## 🚦 État de Maturité & Éligibilité au Déploiement en Production
+## Référence des Endpoints de l'API (Intégration Externe)
 
-### 1. Déploiement en Intranet / Réseau Institutionnel DGRE : ✅ **PRÊT POUR LA PRODUCTION**
-L'application est **entièrement opérationnelle et sécurisée** pour un déploiement au sein de l'infrastructure interne du Ministère, sur un réseau privé virtuel (VPN) ou sur un serveur intranet :
-- **Architecture saine & modulaire** : Clean Architecture hexagonale avec séparation stricte des couches.
-- **Défense en profondeur éprouvée** : Protection contre les injections SQL, isolation des scripts par analyse statique AST (`CodeSecurityValidator`), et protection contre le Path Traversal.
-- **Stabilité et tests** : 24 tests automatisés unitaires et d'intégration validés à 100%.
-- **Conteneurisation Docker** : Images allégées et orchestration multi-conteneurs `docker-compose` avec healthcheck.
+L'API REST est exposée à la racine `http://localhost:8000`. Tous les échanges de données s'effectuent en `application/json` (sauf téléversement de fichiers en `multipart/form-data`).
+
+### 1. Annuaires Hydrologiques (Génération Bimodale PDF & Word)
+
+#### `POST /api/v1/yearbook/generate`
+Déclenche la compilation asynchrone d'un annuaire pluviométrique complet (50+ pages avec tableaux mensuels, calculs statistiques et cartes).
+- **Corps de la requête (JSON) :**
+  ```json
+  {
+    "year": 2021,
+    "gouv": "all",
+    "format": "docx"
+  }
+  ```
+  - `year` *(int, obligatoire)* : Année de début de la campagne agricole (ex: `2021` pour 2021-2022).
+  - `gouv` *(string, obligatoire)* : `"all"` pour l'annuaire national complet, ou le nom du gouvernorat (ex: `"Tunis"`, `"Jendouba"`).
+  - `format` *(string, optionnel)* : Format cible : `"docx"` (Word éditable) ou `"pdf"` (PDF natif). Défaut : `"pdf"`.
+- **Réponse (200 OK) :**
+  ```json
+  {
+    "status": "queued",
+    "request_id": "yearbook_all_2021_1712345678",
+    "format": "docx",
+    "message": "Génération de l'annuaire en format DOCX initiée."
+  }
+  ```
+
+#### `GET /api/v1/maps/status/{request_id}`
+Consulte l'état d'avancement d'une tâche asynchrone (annuaire ou cartographie).
+- **Paramètre d'URL :** `request_id` *(string)*.
+- **Réponse en cours (200 OK) :**
+  ```json
+  {
+    "status": "processing"
+  }
+  ```
+- **Réponse terminée (200 OK) :**
+  ```json
+  {
+    "status": "completed",
+    "format": "docx",
+    "file_url": "/api/v1/yearbook/download/annuaire_all_2021.docx",
+    "docx_url": "/api/v1/yearbook/download/annuaire_all_2021.docx",
+    "pdf_url": "/api/v1/yearbook/download/annuaire_all_2021.pdf",
+    "execution_time": 45.2
+  }
+  ```
+
+#### `GET /api/v1/yearbook/download/{filename}`
+Télécharge le fichier d'annuaire généré (`.docx` ou `.pdf`).
+- **Paramètre d'URL :** `filename` *(string)* (ex: `annuaire_all_2021.docx`).
+- **Réponse :** Fichier binaire en téléchargement direct (`application/vnd.openxmlformats-officedocument.wordprocessingml.document` ou `application/pdf`).
 
 ---
 
-### 2. Exposition en Accès Public Ouvert (Internet sans restriction) : ⚠️ **PRÉREQUIS COMPLÉMENTAIRES**
+### 2. Chat Pluviométrique & RAG Sémantique
 
-Avant d'ouvrir l'application directement au grand public sur l'Internet ouvert (sans mot de passe), une analyse des risques a identifié les exigences suivantes pour garantir la résilience et la sécurité :
+#### `POST /api/v1/annuaire/chat`
+Pose une question hydrologique en langage naturel (français ou anglais).
+- **Corps de la requête (JSON) :**
+  ```json
+  {
+    "question": "Quel est le cumul annuel à Ain Draham en 2021-2022 et l'écart à la normale ?",
+    "llm_provider": "groq",
+    "use_rag": true
+  }
+  ```
+  - `question` *(string, obligatoire)* : Question posée en langage naturel.
+  - `llm_provider` *(string, optionnel)* : Fournisseur LLM (`"groq"`, `"openai"`, `"ollama"`, etc. — prend la valeur par défaut du `.env` si omis).
+  - `use_rag` *(bool, optionnel)* : Active ou désactive la recherche vectorielle sémantique (`true` par défaut).
+- **Réponse (200 OK) :**
+  ```json
+  {
+    "status": "queued",
+    "request_id": "chat_rag_1712345678"
+  }
+  ```
+  *Note : Le résultat complet (réponse rédigée `answer`, tableau `table_html`, `sources`, `images` et `agent_traces`) se récupère via `/api/v1/maps/status/{request_id}`.*
 
-> [!WARNING]
-> **Points de vigilance pour une ouverture publique sur Internet :**
-> 1. **Protection des routes d'administration** : Les endpoints sensibles (`/api/v1/providers/add`, `/api/v1/data/ingest-mdb`, `/api/v1/data/ingest-shapefiles`) ne doivent pas être accessibles sans authentification.
-> 2. **Protection contre le DoS financier (Rate Limiting)** : Les appels aux LLM Cloud (Groq, OpenRouter, OpenAI) doivent être limités par quota IP pour éviter l'épuisement de la facturation ou la saturation CPU par des bots.
-> 3. **Isolation réseau de la base de données** : Le port PostgreSQL 5432 ne doit pas être exposé sur `0.0.0.0`, mais confiné au réseau Docker interne.
-> 4. **Chiffrement de bout en bout (HTTPS)** : Un reverse proxy (Nginx / Caddy / Cloudflare) avec certificat SSL valide est obligatoire en façade publique.
+#### `POST /api/v1/annuaire/index`
+Lance l'indexation sémantique des documents textuels et données de l'annuaire dans la base vectorielle.
+- **Réponse (200 OK) :** `{"status": "started", "message": "Indexation démarrée en arrière-plan."}`
+
+#### `GET /api/v1/annuaire/image/{folder_name}/{filename}`
+Récupère une figure ou carte stockée associée à un annuaire.
 
 ---
 
-## 🗺️ Feuille de Route & Améliorations Futures (Roadmap)
+### 3. Synthèse Cartographique Multi-Agents
 
-Le tableau ci-dessous détaille les chantiers d'amélioration planifiés pour le passage à une échelle publique nationale :
+#### `POST /api/v1/maps/generate`
+Déclenche la génération d'une carte thématique haute résolution via le workflow multi-agents.
+- **Corps de la requête (JSON) :**
+  ```json
+  {
+    "prompt": "Générer la carte des isohyètes annuelles de la Tunisie 2020-2021",
+    "llm_provider": "groq",
+    "use_rag": true
+  }
+  ```
+- **Réponse (200 OK) :** `{"status": "queued", "request_id": "map_req_1712345678"}`
 
-| Axe d'Amélioration | Description | Priorité |
-| :--- | :--- | :---: |
-| **Authentification & Rôles (RBAC)** | Mise en place de jetons JWT / OAuth2 différenciant les ingénieurs DGRE (accès complet, upload MDB, paramétrage LLM) du grand public (consultation de cartes uniquement). | 🔴 **Haute** |
-| **Limitation de Débit (Rate Limiting)** | Intégration de `slowapi` ou d'un middleware Redis limitant les requêtes anonymes à 5 générations de cartes et 10 questions chat par minute et par IP. | 🔴 **Haute** |
-| **Reverse Proxy Nginx & SSL** | Configuration d'un conteneur Nginx en frontal assurant la terminaison HTTPS Let's Encrypt, la compression gzip et la protection contre les requêtes malveillantes. | 🔴 **Haute** |
-| **File de Tâches Asynchrones (Celery/RQ)** | Découplage des traitements lourds (compilation d'annuaires PDF de 80 pages, interpolations IDW massives) via une file Redis/Celery avec suivi de progression en temps réel. | 🟠 **Moyenne** |
-| **Mise en Cache Redis des Résultats** | Mise en cache des requêtes SQL récurrentes et des cartes d'isohyètes déjà calculées pour des temps de réponse instantanés (< 100 ms). | 🟠 **Moyenne** |
-| **Monitoring & Observabilité** | Intégration de métriques Prometheus et de tableaux de bord Grafana pour surveiller la latence des agents LLM et les ressources système. | 🔵 **Basse** |
+#### `GET /api/v1/maps/image/{filename}`
+Récupère l'image PNG haute définition (300 DPI) générée.
+- **Paramètre d'URL :** `filename` *(string)* (ex: `isohyete_2020_2021.png`).
 
+---
+
+### 4. Ingestion et Migration des Données Spatiales
+
+#### `POST /api/v1/data/ingest-mdb`
+Téléverse et migre une base de données historique Microsoft Access (.mdb / .accdb) vers PostgreSQL/PostGIS.
+- **En-tête HTTP :** `Content-Type: multipart/form-data`
+- **Form Data :** `file` *(fichier binaire .mdb ou .accdb)*
+- **Réponse (200 OK) :**
+  ```json
+  {
+    "success": true,
+    "message": "Migration achevée avec succès.",
+    "stations_imported": 148,
+    "records_imported": 54020
+  }
+  ```
+
+#### `POST /api/v1/data/ingest-shapefiles`
+Synchronise et intègre les shapefiles cartographiques (gouvernorats, délégations, limites hydrographiques) dans la base PostGIS.
+- **Réponse (200 OK) :** `{"success": true, "message": "Shapefiles spatiaux ingérés dans PostGIS."}`
+
+---
+
+### 5. Fournisseurs de Modèles LLM (Multi-Provider)
+
+#### `GET /api/v1/providers`
+Liste l'ensemble des fournisseurs et modèles LLM enregistrés.
+- **Réponse (200 OK) :**
+  ```json
+  {
+    "providers": [
+      {
+        "id": "groq_llama33",
+        "name": "Groq LLaMA 3.3 70B",
+        "exec_type": "api_key",
+        "model": "llama-3.3-70b-versatile",
+        "is_default": true
+      }
+    ]
+  }
+  ```
+
+#### `POST /api/v1/providers/add`
+Ajoute dynamiquement un nouveau fournisseur ou un tunnel d'inférence (Colab, Kaggle, Ollama local, etc.).
+- **Corps de la requête (JSON) :**
+  ```json
+  {
+    "name": "Serveur vLLM Colab",
+    "exec_type": "colab",
+    "model": "qwen2.5-coder-7b",
+    "endpoint_url": "https://xxxx.ngrok-free.app/v1",
+    "api_key": ""
+  }
+  ```
+
+---
+
+### 6. Configuration & Surveillance Système
+
+#### `GET /health`
+Sonde de santé système (liveness & readiness probe pour Docker et orchestrateurs).
+- **Réponse (200 OK) :** `{"status": "healthy", "service": "cartagen_api"}`
+
+#### `GET /api/v1/config/env`
+Retourne la configuration actuelle des variables d'environnement (avec masquage automatique des secrets et mots de passe).
+
+#### `POST /api/v1/config/env`
+Met à jour les paramètres de configuration dans le fichier `.env`.
+- **Corps de la requête (JSON) :**
+  ```json
+  {
+    "variables": {
+      "LLM_PROVIDER": "groq",
+      "TEMPERATURE": 0.1
+    }
+  }
+  ```
+
+#### `POST /api/v1/config/test-db`
+Valide la connectivité immédiate avec le cluster PostgreSQL/PostGIS.
+- **Réponse (200 OK) :** `{"success": true, "message": "Connexion PostgreSQL/PostGIS établie avec succès."}`
+
+#### `POST /api/v1/config/test-llm`
+Teste le temps de réponse et la validité du fournisseur LLM sélectionné.
+- **Corps de la requête (JSON) :** `{"provider": "groq", "prompt": "Reponds uniquement: OK"}`
+- **Réponse (200 OK) :** `{"success": true, "provider": "groq", "latency_ms": 142, "response": "OK"}`

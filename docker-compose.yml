@@ -4,6 +4,7 @@ services:
     image: postgis/postgis:15-3.3
     container_name: cartagen_postgres
     restart: always
+    shm_size: 512m
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-dgre2026pass}
@@ -12,6 +13,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./data/init_db:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-dgre_db}"]
       interval: 10s
@@ -26,6 +28,8 @@ services:
     image: ${DOCKER_IMAGE:-cartagen_app:latest}
     container_name: cartagen_server
     restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -39,16 +43,28 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.1-8b-instruct:free}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-""}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      OLLAMA_COLAB_URL: ${OLLAMA_COLAB_URL:-""}
+      OLLAMA_COLAB_URL: ${OLLAMA_COLAB_URL:-http://host.docker.internal:11434}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WORKSPACE_ROOT: /app
       SHAPEFILES_DIR: /app/data/raw
+      MPLBACKEND: Agg
+      IN_DOCKER: "true"
     ports:
       - "8000:8000"
     volumes:
       - ./sandbox_runs:/app/sandbox_runs
       - ./logs:/app/logs
+      - ./figures:/app/figures
+      - ./data:/app/data
+      - ./zvec_store:/app/zvec_store
+      - ./images_temp_national_2020:/app/images_temp_national_2020
+      - ./images_temp_national_2022:/app/images_temp_national_2022
+      - ./images_temp_national_2023:/app/images_temp_national_2023
+      - ./images_temp_national_2024:/app/images_temp_national_2024
+      - ./images_temp_all_2020:/app/images_temp_all_2020
+      - ./images_temp:/app/images_temp
+      - hf_cache:/root/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s
@@ -59,4 +75,7 @@ services:
 volumes:
   pgdata:
     driver: local
+  hf_cache:
+    driver: local
+
 

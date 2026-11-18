@@ -47,3 +47,4 @@ def get_version_metadata() -> Dict[str, Any]:
         "git_commit": get_git_commit_hash(),
         "spec_standard": "Semantic Versioning 2.0.0 (https://semver.org/)"
     }
+

@@ -5,11 +5,13 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     WORKSPACE_ROOT=/app \
-    PORT=8000
+    PORT=8000 \
+    IN_DOCKER=true \
+    MPLBACKEND=Agg
 
 WORKDIR /app
 
-# Installation des dépendances système (GDAL, PostGIS tools, TexLive pour PDFLaTeX, MDBtools/PyODBC)
+# Installation des dépendances système (GDAL, PostGIS tools, TexLive pour PDFLaTeX, MDBtools/PyODBC, Polices)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gdal-bin \
@@ -19,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unixodbc-dev \
     mdbtools \
     odbc-mdbtools \
+    fonts-dejavu-core \
+    fonts-liberation \
     texlive-latex-base \
     texlive-latex-extra \
     texlive-lang-french \
@@ -41,8 +45,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copier l'ensemble du projet CartaGen (filtré par .dockerignore)
 COPY . /app
 
-# Création des répertoires de stockage temporaire et logs
-RUN mkdir -p /app/sandbox_runs/uploads /app/logs /app/figures /app/data/raw
+# Création des répertoires de stockage temporaire, caches et logs
+RUN mkdir -p /app/sandbox_runs/uploads /app/logs /app/figures /app/data/raw /app/zvec_store /app/images_temp
 
 EXPOSE 8000
 

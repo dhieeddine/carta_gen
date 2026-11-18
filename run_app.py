@@ -16,7 +16,7 @@ if __name__ == "__main__":
     
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
-    reload_enabled = os.getenv("RELOAD", "false").lower() in ("true", "1", "yes")
+    reload_enabled = os.getenv("RELOAD", "true").lower() in ("true", "1", "yes")
 
     print(f"[CartaGen] Lancement du serveur sur http://{host}:{port} (reload={reload_enabled})")
     

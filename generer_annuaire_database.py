@@ -2944,10 +2944,25 @@ def compile_latex(tex_file, output_pdf):
             base = os.path.splitext(tex_file)[0]
             if os.path.exists(f"{base}.pdf"):
                 src_pdf = os.path.abspath(f"{base}.pdf")
+                
+                # Validation avec PyMuPDF pour eviter les PDF corrompus (0 pages)
+                try:
+                    import fitz
+                    doc = fitz.open(src_pdf)
+                    page_count = len(doc)
+                    doc.close()
+                    if page_count == 0:
+                        print(f"⚠️ PDF gÃ©nÃ©rÃ© mais corrompu (0 pages). Echec.")
+                        os.remove(src_pdf)
+                        continue
+                except Exception as e:
+                    print(f"⚠️ Erreur lors de la validation du PDF : {e}")
+                    continue
+                    
                 dst_pdf = os.path.abspath(output_pdf)
                 if src_pdf != dst_pdf:
                     shutil.move(src_pdf, dst_pdf)
-                print(f"🎉 PDF généré avec succès : {output_pdf}")
+                print(f"ðŸŽ‰ PDF gÃ©nÃ©rÃ© avec succÃ¨s : {output_pdf} ({page_count} pages)")
                 return True
         else:
             print(f"⚠️ {engine} non trouvé.")

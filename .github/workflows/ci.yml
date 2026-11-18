@@ -87,3 +87,4 @@ jobs:
       - name: Build Docker Image (Dry Run)
         run: |
           docker build -t cartagen-api:latest .
+
